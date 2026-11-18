@@ -31,12 +31,18 @@ process.on('unhandledRejection', (reason) => {
 
 async function main() {
   if (!dev && env.jwtSecretIsDefault) {
-    console.error('JWT_SECRET is not set. Add a long random JWT_SECRET to the server settings before starting in production.');
+    console.error('JWT_SECRET is missing, too short or still an example value. Set a long random JWT_SECRET (24+ characters) in the server settings before starting in production.');
     process.exit(1);
   }
+  if (dev && env.jwtSecretIsDefault) console.warn('[warning] JWT_SECRET is missing or an example value: fine for a local test, never for production.');
 
   const connectDb = require('./server/src/config/db');
   await connectDb();
+
+  // ADMIN_EMAIL + ADMIN_PASSWORD (first start after Google sign-in): ready
+  // before the first request, so the Super Admin can sign in straight away.
+  await require('./server/src/services/loginAccessService').applyAdminPasswordFromEnv()
+    .catch((error) => console.error('[login] ADMIN_PASSWORD could not be applied:', error.message));
 
   const api = require('./server/src/app');
   const server = http.createServer();

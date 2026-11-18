@@ -21,7 +21,8 @@ function reply(res, body, status = 200) {
 }
 const paths = (name) => [`/${name}`, `/${name}.aspx`];
 const bodyText = (req) => (typeof req.body === 'string' ? req.body : '');
-const ipOf = (req) => String(req.ip || '').replace(/^::ffff:/, '');
+// Through the Cloudflare relay, the relay names the machine's own address.
+const ipOf = (req) => String(req.get('x-relay-client-ip') || req.ip || '').split(',')[0].trim().replace(/^::ffff:/, '').slice(0, 64);
 const serialOf = (req) => req.query.SN || req.query.sn || '';
 
 // First call after start-up (?options=all): tell the machine what to send.

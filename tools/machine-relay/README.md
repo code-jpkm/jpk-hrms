@@ -14,11 +14,12 @@ Most eSSL machines can only send plain `http`, but the HRMS on Render only accep
 |---|---|---|
 | **A. Office computer relay** (works with every machine) | Any always-on computer in the same network, with Node.js | Server Mode **ADMS** · Enable Domain Name **OFF** · Server Address = **that computer's IP** · Server Port **8081** · Proxy **OFF** |
 | **B. Straight to the HRMS** (only if the machine supports https) | Nothing | Server Mode **ADMS** · Enable Domain Name **ON** · Server Address = **the HRMS API address** · Server Port **443** · Proxy **OFF** |
-| **C. Cloudflare relay** (no computer) | The company domain on Cloudflare | Server Mode **ADMS** · Enable Domain Name **ON** · Server Address **punch.yourcompany.com** · Server Port **80** · Proxy **OFF** |
+| **C. Cloudflare relay** (no computer, recommended) | A free Cloudflare account | Server Mode **ADMS** · Enable Domain Name **ON** · Server Address **jpk-punch.yourname.workers.dev** · Server Port **80** (if asked) · Proxy **OFF** |
 
 For B and C, the machine also needs to reach the internet. Under **Menu → COMM → Ethernet**, set:
-- **Gateway:** your router, for example 192.168.1.1.
-- **DNS:** 8.8.8.8.
+- **Subnet Mask:** 255.255.255.0.
+- **Gateway:** your router, for example 192.168.1.1 (not a computer's address).
+- **DNS:** 8.8.8.8. With DNS 0.0.0.0 the machine cannot find any address on the internet.
 
 ## A. Office computer relay
 
@@ -34,9 +35,18 @@ To start the relay with Windows: press **Win + R**, type `shell:startup`, press 
 
 The computer and the machine must be in the same network. For example, a computer at 192.168.1.100 and a machine at 192.168.1.10.
 
-## C. Cloudflare relay
+## C. Cloudflare relay (no computer)
 
-The setup steps are at the top of `cloudflare-worker.js`. After setting it up, add `ADMS_RELAY_HOST=punch.yourcompany.com` to the HRMS server settings, so the page shows that address.
+A free Cloudflare "Worker" receives the machine's plain-http punches and passes them on to the HRMS over https. The Worker's own `*.workers.dev` address accepts plain http, so no company domain is needed.
+
+1. Take the relay code: `cloudflare-worker.js` in this folder (it already sends to `https://jpk-hrms.onrender.com`; change `HRMS_URL` if the address changes), or press **Copy relay code** on **Attendance machines** → **Through Cloudflare (free)**.
+2. Sign up free at https://dash.cloudflare.com (no card needed).
+3. **Workers & Pages** → **Create** → **Start with Hello World!** → name it `jpk-punch` → **Deploy**.
+4. **Edit code** → delete everything → paste the relay code → **Deploy**.
+5. Copy the address Cloudflare shows, e.g. `jpk-punch.yourname.workers.dev`, and save it on the Attendance machines page (step 2 there). The page checks that the relay works and reaches the HRMS.
+6. On the machine, set the values from table row C, then restart it.
+
+Opening the relay address in a browser shows `JPK attendance relay` and whether it reaches the HRMS. The free plan allows 100,000 requests a day; one machine uses about 3,000.
 
 ## After the machine connects
 
@@ -48,7 +58,7 @@ The setup steps are at the top of `cloudflare-worker.js`. After setting it up, a
 
 | Setting | Default | What it does |
 |---|---|---|
-| `ADMS_RELAY_HOST` | – | Address of a Cloudflare relay, shown on the setup card |
+| `ADMS_RELAY_HOST` | – | Address of the Cloudflare relay. Normally saved on the Attendance machines page instead |
 | `ADMS_PUBLIC_HOST` / `ADMS_PUBLIC_PORT` | the API's own address / 443 | Address the setup card shows for "straight to the HRMS" |
 | `ADMS_SERIALS` | – | Serial numbers approved automatically (comma separated) |
 | `ADMS_TENANT_ID` | the only company | Company that new machines belong to, when there are several |

@@ -7,6 +7,17 @@ function trimSlash(value) {
 
 const port = Number(process.env.PORT || 3000);
 
+// Example values from the old and new .env templates. Anyone who knows one
+// could sign in as anybody, so production refuses them (see server.js).
+const EXAMPLE_SECRETS = new Set([
+  'change_this_to_a_long_random_secret',
+  'replace-with-a-long-random-secret',
+  'dev_secret_change_me',
+  'secret',
+  'changeme'
+]);
+const jwtSecretRaw = String(process.env.JWT_SECRET || '').trim();
+
 // v27: the website and the API are one Next.js app, so one public address
 // serves both. Render sets RENDER_EXTERNAL_URL by itself; APP_URL wins when set
 // (for a custom domain). Used for links in emails / WhatsApp and for the
@@ -22,8 +33,9 @@ module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port,
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/hrms_full_system',
-  jwtSecret: process.env.JWT_SECRET || 'dev_secret_change_me',
-  jwtSecretIsDefault: !process.env.JWT_SECRET,
+  jwtSecret: jwtSecretRaw || 'dev_secret_change_me',
+  // Missing, an example value, or too short to be safe.
+  jwtSecretIsDefault: !jwtSecretRaw || EXAMPLE_SECRETS.has(jwtSecretRaw.toLowerCase()) || jwtSecretRaw.length < 24,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   appUrl,
   // Kept under the old names so every existing caller keeps working.

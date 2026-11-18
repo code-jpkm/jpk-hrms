@@ -21,7 +21,7 @@ import {
   ClipboardList, MessageCircleHeart, Trophy, Hand, Flame, Banknote, Receipt, FileCheck2,
   Scale, Calculator, UserRound, ClipboardPaste,
   Menu, CornerDownLeft, CalendarCheck2, CircleHelp, ArrowLeft, MoreHorizontal, PanelLeft,
-  Wifi, WifiOff, Cloud, Monitor, Router,
+  Wifi, WifiOff, Cloud, Monitor, Router, Check,
 } from 'lucide-react';
 
 const MAP = {
@@ -45,7 +45,7 @@ const MAP = {
   Sparkle, ChevronUp, Play, Square, Server, Webhook, Globe, Clipboard,
   ClipboardList, MessageCircleHeart, Trophy, Hand, Flame, Banknote, Receipt, FileCheck2,
   Scale, Calculator, UserRound, ClipboardPaste, Menu, CornerDownLeft, CalendarCheck2, CircleHelp, ArrowLeft, MoreHorizontal, PanelLeft,
-  Wifi, WifiOff, Cloud, Monitor, Router,
+  Wifi, WifiOff, Cloud, Monitor, Router, Check,
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 2, className, style }) {

@@ -19,7 +19,8 @@ project**. One folder, one GitHub repo, one Render service.
 | `server/` | The API: models, routes, controllers, services, scheduled jobs |
 | `server.js` | Starts everything: Next.js + API + scheduled jobs + email/WhatsApp outbox |
 | `public/` | Logo, favicon, the attendance-relay download |
-| `tools/` | Office tools: attendance-machine relay, older biometric bridges |
+| `tools/` | Office tools: attendance-machine relays (Cloudflare and office computer), older biometric bridges |
+| `android-app/` | The Android app (React Native / Expo, JS only). Not part of the website build; see `android-app/README.md` |
 | `docs/` | Change notes (`V27-CHANGES.md`, older notes in `docs/history`) |
 
 ## Run on your computer
@@ -85,15 +86,26 @@ Forgot password: the sign-in page sends a reset link (email + WhatsApp, 30 minut
 
 ## Attendance machines
 
-Same as v26.3, but the address is now the app's address. On the machine
-(Cloud Server / ADMS): Domain ON, `<your-service>.onrender.com`, port 443 — or
-use the office relay (`tools/machine-relay`, `APP_URL` = the app's address).
+Open **Attendance machines** (9-dot menu → Setup), add the machine by its serial
+number and follow the steps on its card. Most eSSL machines (for example the
+X2008) can only send plain http, and Render only accepts https, so they go
+through a relay:
+
+- **Through Cloudflare (free, recommended):** the page gives the relay code with
+  this server's address filled in. Deploy it as a free Cloudflare Worker, save its
+  `*.workers.dev` address on the page (it is checked), and type that address into
+  the machine (Domain ON, port 80). Details: `tools/machine-relay/README.md`.
+- **Through an office computer:** `tools/machine-relay` on an always-on computer.
+- **Straight to the HRMS** (Domain ON, port 443) works only on machines with https.
+
+The machine also needs Subnet Mask 255.255.255.0, Gateway = the router and
+DNS 8.8.8.8 (Menu → COMM → Ethernet).
 
 ## Mobile app
 
-The mobile app (`hrms-mobile-v25.8.2-google-login-fixed`) only had Google
-sign-in, which this server no longer accepts. It needs an update (email +
-password + captcha) before it can sign in again.
+`android-app/` holds the Android app for v27 (email or employee code + password +
+captcha, phone check-in, attendance, leave, payslips, approvals). It points at
+https://jpk-hrms.onrender.com. Build the APK with Expo EAS: see `android-app/README.md`.
 
 ## Tests run for v27 (local test database)
 

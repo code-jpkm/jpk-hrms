@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.apk
+*.aab
+.env
+.env.local
+android/
+ios/
+.DS_Store

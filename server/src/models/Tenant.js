@@ -17,7 +17,10 @@ const tenantSchema = new mongoose.Schema({
     showLogo: { type: Boolean, default: false },
     companyAddress: String,
     footerText: String
-  }
+  },
+  // Address of the free Cloudflare relay that passes plain-http machine punches on
+  // to the HRMS over https (Attendance machines → Through Cloudflare).
+  admsRelayHost: { type: String, trim: true, default: '' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Tenant', tenantSchema);

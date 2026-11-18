@@ -5,6 +5,7 @@ import { patch, post, remove } from '../api/client.js';
 import { useApi } from '../hooks/useApi.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { hasAbility } from '../utils/permissions.js';
+import { relayWorkerCode } from '../utils/relayWorker.js';
 import '../styles/machines.css';
 
 // ---------------------------------------------------------------------------
@@ -141,7 +142,7 @@ export default function Biometric() {
             </section>
             <section>
               <h3><span>2</span> Connect the machine</h3>
-              <Setup connect={data.connect} lettered />
+              <Setup connect={data.connect} lettered canManage={canManage} onChanged={reload} />
             </section>
           </div>
         </Card>
@@ -158,7 +159,7 @@ export default function Biometric() {
       {machines.length > 0 && (
         <details className="mc-more">
           <summary><Icon name="CircleHelp" size={15} /> How to connect a machine</summary>
-          <div className="mc-more-body"><Setup connect={data.connect} /></div>
+          <div className="mc-more-body"><Setup connect={data.connect} canManage={canManage} onChanged={reload} /></div>
         </details>
       )}
 
@@ -187,6 +188,8 @@ export default function Biometric() {
           <p className="mc-hint">Linking a machine ID adds its punches to that person's attendance straight away. If it was linked to someone else before, those days move to the right person. The ID is also saved as the employee's Device User ID.</p>
         </Card>
       )}
+
+      {machines.length > 0 && <NoMachineIdCard rows={data.withoutMachineId || []} canManage={canManage} onChanged={reload} />}
 
       {machines.length > 0 && (
         <Card title="Latest punches" className="mc-punch-card" actions={<span className="mc-muted">{data.todayCount} today</span>}>
@@ -259,8 +262,17 @@ function MachineCard({ m, connect, canManage, onChanged }) {
           </div>
           <details open={false}>
             <summary>Show how to connect it</summary>
-            <Setup connect={connect} lettered />
+            <Setup connect={connect} lettered canManage={canManage} onChanged={onChanged} />
           </details>
+          <div className="mc-trouble">
+            <b><Icon name="ListChecks" size={15} /> Still not connected? Check these on the machine</b>
+            <ul>
+              <li><b>DNS is 8.8.8.8</b> (Menu → COMM → Ethernet). With DNS 0.0.0.0 the machine cannot find any address on the internet.</li>
+              <li><b>Gateway is your internet router</b>, often 192.168.1.1, not a computer's address. Subnet Mask 255.255.255.0.</li>
+              <li><b>Most eSSL machines (like the X2008) send plain http only.</b> The HRMS takes https only, so use <b>Through Cloudflare</b> or <b>Through an office computer</b> in the steps above.</li>
+              <li>The network cable is in, the router has internet, and you restarted the machine after the changes.</li>
+            </ul>
+          </div>
         </div>
       )}
       {!m.approved && (
@@ -311,6 +323,96 @@ function MachineCard({ m, connect, canManage, onChanged }) {
         </footer>
       )}
     </section>
+  );
+}
+
+function csvDownload(rows) {
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Name', 'Employee code', 'Department'].map(esc).join(',')]
+    .concat(rows.map((r) => [r.name, r.employeeCode, r.department].map(esc).join(',')));
+  const url = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `employees-without-machine-id-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Employees no machine ID points to: their machine punches cannot be counted yet.
+function NoMachineIdCard({ rows, canManage, onChanged }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => !q || [r.name, r.employeeCode, r.department].join(' ').toLowerCase().includes(q));
+  }, [rows, query]);
+  const LIMIT = 12;
+  const visible = open || query ? shown : shown.slice(0, LIMIT);
+
+  return (
+    <Card
+      title={<>Employees with no machine ID <span className={`mc-count ${rows.length ? 'warn' : 'ok'}`}>{rows.length}</span></>}
+      className="mc-nomid-card"
+      actions={rows.length > 0 ? (
+        <div className="mc-nomid-actions">
+          <label className="mc-search"><Icon name="Search" size={14} /><input placeholder="Search name or code" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
+          <button type="button" className="secondary" onClick={() => csvDownload(rows)}><Icon name="Download" size={14} /> List (CSV)</button>
+        </div>
+      ) : null}
+    >
+      {!rows.length ? (
+        <p className="mc-note">Every active employee has a machine ID.</p>
+      ) : (
+        <>
+          <p className="mc-note warn"><b>{rows.length} employee{rows.length === 1 ? '' : 's'}</b> can’t be counted from the machine yet. Add them on the machine (M/OK → User Mgt → New User), then type the same ID here.</p>
+          <div className="mc-nomid" role="table">
+            <div className="mc-nomid-row mc-head" role="row"><span>Employee</span><span>Department</span><span>Machine ID</span></div>
+            {visible.map((r) => <NoMachineIdRow key={r._id} r={r} canManage={canManage} onChanged={onChanged} />)}
+          </div>
+          {!query && shown.length > LIMIT && (
+            <button type="button" className="mc-more-btn" onClick={() => setOpen((v) => !v)}>{open ? 'Show fewer' : `Show all ${shown.length}`}</button>
+          )}
+          {query && !shown.length && <p className="mc-muted">No one matches “{query}”.</p>}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function NoMachineIdRow({ r, canManage, onChanged }) {
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(value) {
+    const id = String(value || '').trim();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await post('/biometric/machines/link', { pin: id, employeeId: r._id }, {
+        loadingMessage: 'Saving machine ID…',
+        successMessage: `${r.name} is machine ID ${id}`
+      });
+      setPin('');
+      onChanged();
+    } catch { /* the toast explains */ } finally { setBusy(false); }
+  }
+  return (
+    <div className="mc-nomid-row" role="row">
+      <span><b>{r.name}</b><small className="mc-muted">{r.employeeCode}</small></span>
+      <span className="mc-muted">{r.department || '—'}</span>
+      <span className="mc-nomid-set">
+        {r.suggestedPin && canManage && (
+          <button type="button" className="mc-suggest" disabled={busy} onClick={() => save(r.suggestedPin)} title={`The machine has “${r.suggestedName}” as ID ${r.suggestedPin}`}>
+            <Icon name="Link2" size={13} /> Use ID {r.suggestedPin}?
+          </button>
+        )}
+        {canManage ? (
+          <form onSubmit={(e) => { e.preventDefault(); save(pin); }}>
+            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\s+/g, ''))} placeholder="e.g. 105" inputMode="numeric" maxLength={24} aria-label={`Machine ID for ${r.name}`} disabled={busy} />
+            <button type="submit" disabled={busy || !pin}>Save</button>
+          </form>
+        ) : <span className="mc-muted">Not set</span>}
+      </span>
+    </div>
   );
 }
 
@@ -399,13 +501,97 @@ function ValueRow({ k, v, copyable }) {
   );
 }
 
-function Setup({ connect = {}, lettered = false }) {
+/** Machine network values: the same for every way that goes over the internet. */
+function EthernetValues() {
+  return (
+    <>
+      <div className="mc-kvs">
+        <ValueRow k="IP Address" v="a free address in your network, e.g. 192.168.1.10" />
+        <ValueRow k="Subnet Mask" v="255.255.255.0" />
+        <ValueRow k="Gateway" v="your internet router, e.g. 192.168.1.1" />
+        <ValueRow k="DNS" v="8.8.8.8" copyable />
+        <ValueRow k="DHCP" v="OFF" />
+      </div>
+      <small className="mc-muted">
+        The router's address is on any computer in the same network. Mac: System Settings → Network → Wi-Fi or Ethernet → Details → TCP/IP → Router.
+        Windows: type <code>ipconfig</code> in Command Prompt and look at Default Gateway. DNS must not stay 0.0.0.0.
+      </small>
+    </>
+  );
+}
+
+/** Where the Cloudflare relay lives: saved for the company, then checked. */
+function RelayAddress({ connect, canManage, onChanged }) {
+  const saved = connect.relayHost || '';
+  const [value, setValue] = useState(saved);
+  const [check, setCheck] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setValue(saved); }, [saved]);
+
+  if (connect.relayFromSettings) {
+    return <p>Set in the server settings (ADMS_RELAY_HOST): <b>{saved}</b></p>;
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    setCheck(null);
+    try {
+      const result = await post('/biometric/machines/relay', { host: value }, { toast: false });
+      setCheck(result.check || { ok: true, message: 'Relay address removed.' });
+      onChanged?.();
+    } catch (err) {
+      setCheck({ ok: false, message: err?.message || 'Could not save the address.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const same = value.trim().toLowerCase() === saved;
+  return (
+    <form className="mc-relay" onSubmit={save}>
+      <div className="mc-relay-row">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="jpk-punch.yourname.workers.dev"
+          aria-label="Relay address"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          disabled={!canManage || busy}
+        />
+        {canManage && (
+          <button type="submit" className="primary" disabled={busy || (!value.trim() && !saved)}>
+            <Icon name={busy ? 'Loader2' : same && saved ? 'RefreshCw' : 'Check'} size={15} />
+            {busy ? 'Checking…' : same && saved ? 'Check again' : 'Save and check'}
+          </button>
+        )}
+      </div>
+      {check && (
+        <p className={`mc-check ${check.ok ? 'ok' : 'warn'}`}>
+          <Icon name={check.ok ? 'CircleCheck' : 'CircleAlert'} size={15} /> {check.message}
+        </p>
+      )}
+      {!canManage && !saved && <small className="mc-muted">Ask HR or an admin to save the relay address here.</small>}
+    </form>
+  );
+}
+
+function Setup({ connect = {}, lettered = false, canManage = false, onChanged }) {
   const ways = [
-    connect.relayHost && { id: 'cloud', icon: 'Cloud', label: 'Through the punch relay', hint: 'No computer needed' },
-    { id: 'office', icon: 'Monitor', label: 'Through an office computer', hint: 'Works with every machine' },
-    { id: 'direct', icon: 'Globe', label: 'Straight to the HRMS', hint: 'Only if the machine supports https' }
-  ].filter(Boolean);
-  const [way, setWay] = useState(ways[0].id);
+    { id: 'cloud', icon: 'Cloud', label: 'Through Cloudflare (free)', hint: 'No computer needed · every machine' },
+    { id: 'office', icon: 'Monitor', label: 'Through an office computer', hint: 'A computer that stays on' },
+    { id: 'direct', icon: 'Globe', label: 'Straight to the HRMS', hint: 'Only machines with https (rare)' }
+  ];
+  const [way, setWay] = useState('cloud');
+  const [copied, setCopied] = useState(false);
+  const code = useMemo(() => relayWorkerCode(connect.appUrl), [connect.appUrl]);
+  function copyCode() {
+    copy(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  }
 
   return (
     <div className="mc-setup">
@@ -418,6 +604,48 @@ function Setup({ connect = {}, lettered = false }) {
           </button>
         ))}
       </div>
+
+      {way === 'cloud' && (
+        <ol className={`mc-steps ${lettered ? 'lettered' : ''}`}>
+          <li>
+            <h4>Make the free relay on Cloudflare (once, about 5 minutes)</h4>
+            <p>Most eSSL machines can only send plain http, and the HRMS only takes https. A small free Cloudflare program, a "Worker", passes every punch on.</p>
+            <ol className="mc-substeps">
+              <li>Open <a href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noreferrer">dash.cloudflare.com</a> and sign up. The free plan is enough; no card needed.</li>
+              <li>Go to <b>Workers &amp; Pages</b> → <b>Create</b> → <b>Start with Hello World!</b>, name it <b>jpk-punch</b> and press <b>Deploy</b>.</li>
+              <li>Press <b>Edit code</b>, delete everything, paste the relay code and press <b>Deploy</b>.</li>
+              <li>Copy the address Cloudflare shows. It looks like <b>jpk-punch.yourname.workers.dev</b>.</li>
+            </ol>
+            <div className="mc-downloads">
+              <button type="button" className="mc-btn" onClick={copyCode}><Icon name={copied ? 'Check' : 'Copy'} size={15} /> {copied ? 'Copied' : 'Copy relay code'}</button>
+              <button type="button" className="mc-btn" onClick={() => downloadText('cloudflare-worker.js', code)}><Icon name="Download" size={15} /> cloudflare-worker.js</button>
+            </div>
+            <small className="mc-muted">The code already has this HRMS's address ({connect.appUrl}) in it.</small>
+          </li>
+          <li>
+            <h4>Save the relay address here</h4>
+            <RelayAddress connect={connect} canManage={canManage} onChanged={onChanged} />
+          </li>
+          <li>
+            <h4>On the machine: Menu → COMM → Ethernet</h4>
+            <EthernetValues />
+          </li>
+          <li>
+            <h4>Menu → COMM → Cloud Server Setting</h4>
+            <div className="mc-kvs">
+              <ValueRow k="Server Mode" v="ADMS" />
+              <ValueRow k="Enable Domain Name" v="ON" />
+              <ValueRow k="Server Address" v={connect.relayHost || `the relay address from step ${lettered ? 'B' : '2'}`} copyable={Boolean(connect.relayHost)} />
+              <ValueRow k="Server Port" v={`${connect.relayPort || 80} (only if the machine asks)`} />
+              <ValueRow k="Enable Proxy Server" v="OFF" />
+            </div>
+          </li>
+          <li>
+            <h4>Restart the machine</h4>
+            <p>Within a minute it shows <b>Connected</b> on this page. A machine you did not add first shows here too: check its serial number and press <b>Approve</b>.</p>
+          </li>
+        </ol>
+      )}
 
       {way === 'office' && (
         <ol className={`mc-steps ${lettered ? 'lettered' : ''}`}>
@@ -439,7 +667,7 @@ function Setup({ connect = {}, lettered = false }) {
               <ValueRow k="Server Port" v={String(connect.officeRelayPort || 8081)} />
               <ValueRow k="Enable Proxy Server" v="OFF" />
             </div>
-            <small className="mc-muted">The machine and the computer must be in the same network, e.g. machine 192.168.1.10 and computer 192.168.1.100.</small>
+            <small className="mc-muted">The machine and the computer must be in the same network, e.g. machine 192.168.1.10 and computer 192.168.1.20.</small>
           </li>
           <li>
             <h4>Restart the machine</h4>
@@ -448,30 +676,27 @@ function Setup({ connect = {}, lettered = false }) {
         </ol>
       )}
 
-      {(way === 'direct' || way === 'cloud') && (
+      {way === 'direct' && (
         <ol className={`mc-steps ${lettered ? 'lettered' : ''}`}>
           <li>
             <h4>On the machine: Menu → COMM → Ethernet</h4>
-            <div className="mc-kvs">
-              <ValueRow k="Subnet Mask" v="255.255.255.0" />
-              <ValueRow k="Gateway" v="your internet router, usually 192.168.1.1" />
-              <ValueRow k="DNS" v="8.8.8.8" />
-            </div>
+            <EthernetValues />
           </li>
           <li>
             <h4>Menu → COMM → Cloud Server Setting</h4>
             <div className="mc-kvs">
               <ValueRow k="Server Mode" v="ADMS" />
               <ValueRow k="Enable Domain Name" v="ON" />
-              <ValueRow k="Server Address" v={way === 'cloud' ? connect.relayHost : connect.host} copyable />
-              <ValueRow k="Server Port" v={String(way === 'cloud' ? connect.relayPort : connect.port)} />
+              <ValueRow k="Server Address" v={connect.host} copyable />
+              <ValueRow k="Server Port" v={String(connect.port)} />
               <ValueRow k="Enable Proxy Server" v="OFF" />
             </div>
+            <small className="mc-muted">This works only if the machine can send https. If its Cloud Server Setting has no https option and no Server Port with the domain on, it cannot: use Through Cloudflare.</small>
           </li>
           <li>
             <h4>Restart the machine</h4>
             <p>Within a minute it shows <b>Connected</b> on this page. A machine you did not add first shows here too: check its serial number and press <b>Approve</b>.</p>
-            {way === 'direct' && <p className="mc-muted">Not showing up after two minutes? Most machines can only send plain http. Use <b>Through an office computer</b> instead.</p>}
+            <p className="mc-muted">Not showing up after two minutes? The machine can only send plain http. Use <b>Through Cloudflare</b> instead.</p>
           </li>
         </ol>
       )}

@@ -23,6 +23,14 @@ exports.machines = asyncHandler(async (req, res) => {
   res.json(await adms.overview({ tenantId: req.tenantId, req }));
 });
 
+// The free Cloudflare relay for machines that can only send plain http.
+exports.saveRelay = asyncHandler(async (req, res) => {
+  const result = await adms.saveRelayHost({ tenantId: req.tenantId, host: (req.body || {}).host, req });
+  await auditMachine(req, 'MACHINE_RELAY_SAVED', req.tenantId, { relayHost: result.relayHost },
+    result.relayHost ? `Attendance machines send through the relay ${result.relayHost}` : 'Removed the attendance machine relay address');
+  res.json(result);
+});
+
 exports.addMachine = asyncHandler(async (req, res) => {
   const { serialNumber, name, locationName, importFrom } = req.body || {};
   const result = await adms.addMachine({ tenantId: req.tenantId, userId: req.user?._id, serialNumber, name, locationName, importFrom });

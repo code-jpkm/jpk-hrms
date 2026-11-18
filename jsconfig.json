@@ -2,8 +2,16 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": [
+        "./*"
+      ]
     }
   },
-  "exclude": ["node_modules", ".next", "server", "tools"]
+  "exclude": [
+    "node_modules",
+    ".next",
+    "server",
+    "tools",
+    "android-app"
+  ]
 }

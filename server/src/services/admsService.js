@@ -606,29 +606,82 @@ const RESULT_TEXT = (p) => {
 
 const fullName = (e) => `${e?.firstName || ''} ${e?.lastName || ''}`.replace(/\s+/g, ' ').trim();
 
+/** "http://Name.Example.com/x" -> "name.example.com" (port kept). */
+function cleanHost(value) {
+  return String(value || '').trim().replace(/^[a-z]+:\/\//i, '').replace(/[/?#].*$/, '').replace(/\.$/, '').toLowerCase();
+}
+
 /** Where the machine should send to, shown on the setup card. */
-function connectInfo(req) {
+function connectInfo(req, saved = {}) {
   const forwardedHost = String(req.get('x-forwarded-host') || '').split(',')[0].trim();
   const host = (process.env.ADMS_PUBLIC_HOST || forwardedHost || req.get('host') || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   const [hostName, hostPort] = host.split(':');
   const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostName || '');
   const secure = !local && (req.secure || String(req.get('x-forwarded-proto') || '').includes('https') || !hostPort);
+  const envRelay = cleanHost(process.env.ADMS_RELAY_HOST);
   return {
     host: hostName || '',
     port: Number(process.env.ADMS_PUBLIC_PORT || hostPort || (secure ? 443 : 80)),
     secure,
     appUrl: `${secure ? 'https' : 'http'}://${host}`,
-    relayHost: String(process.env.ADMS_RELAY_HOST || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+    relayHost: envRelay || cleanHost(saved.relayHost),
+    relayFromSettings: Boolean(envRelay),
     relayPort: Number(process.env.ADMS_RELAY_PORT || 80),
     officeRelayPort: 8081,
     pollSeconds: POLL_SECONDS()
   };
 }
 
+const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:\d{2,5})?$/;
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/;
+
+/**
+ * Asks the relay's own check page (http://relay/) whether it is a JPK relay and
+ * which HRMS it passes punches to. Only a yes/no comes back, never the page.
+ */
+async function checkRelay(host, ownHost) {
+  if (process.env.NODE_ENV === 'production' && PRIVATE_HOST.test(host)) {
+    return { ok: false, message: 'This is an address inside your office network, so it cannot be checked from here.' };
+  }
+  try {
+    const res = await fetch(`http://${host}/`, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'JPK-HRMS relay check' } });
+    const text = (await res.text()).slice(0, 2000);
+    if (!/JPK attendance relay/i.test(text)) {
+      return { ok: false, message: res.status >= 300 && res.status < 400
+        ? 'That address answers only over https, so the machine cannot use it. Use the address Cloudflare gives the relay (it ends in .workers.dev).'
+        : 'Something answers at that address, but it is not the JPK relay. Paste the relay code into the Worker and press Deploy.' };
+    }
+    const target = cleanHost((text.match(/HRMS:\s*(\S+)/i) || [])[1]);
+    const nameOf = (h) => cleanHost(h).split(':')[0];
+    if (ownHost && target && nameOf(target) !== nameOf(ownHost)) {
+      return { ok: false, message: `The relay works but sends punches to ${target}, not to this HRMS. Copy the relay code from this page again and deploy it.` };
+    }
+    if (/HRMS answer:\s*ok/i.test(text)) return { ok: true, message: 'The relay works and reaches this HRMS.' };
+    return { ok: false, message: 'The relay answers, but it could not reach this HRMS yet. Wait a minute and check again.' };
+  } catch {
+    return { ok: false, message: 'Nothing answered at that address. Check the spelling, and that the Worker is deployed.' };
+  }
+}
+
+/** Saves (or clears) the relay address for the company and checks it. */
+async function saveRelayHost({ tenantId, host, req }) {
+  const clean = cleanHost(host);
+  if (clean && (clean.length > 120 || !HOST_PATTERN.test(clean))) {
+    throw new ApiError(400, 'Type only the address, for example jpk-punch.yourname.workers.dev');
+  }
+  if (clean && cleanHost(connectInfo(req).host) === clean.split(':')[0]) {
+    throw new ApiError(400, 'That is the HRMS address itself. Type the address Cloudflare gives the relay (it ends in .workers.dev).');
+  }
+  await Tenant.updateOne({ _id: tenantId }, { $set: { admsRelayHost: clean } });
+  const connect = connectInfo(req, { relayHost: clean });
+  const check = clean ? await checkRelay(clean, connect.host) : null;
+  return { relayHost: clean, check, connect };
+}
+
 async function overview({ tenantId, req }) {
   const since = new Date(Date.now() - 90 * 86400000);
   const todayStart = dayStart(dayKeyAt(new Date()));
-  const [devices, perPin, employees, recent, todayCount, pending] = await Promise.all([
+  const [devices, perPin, employees, recent, todayCount, pending, tenant] = await Promise.all([
     BiometricDevice.find({ tenantId, mode: 'ADMS' }).sort({ approved: 1, lastSeenAt: -1 }).lean(),
     RawPunchLog.aggregate([
       { $match: { tenantId: toObjectId(tenantId), source: 'ADMS', timestamp: { $gte: since } } },
@@ -643,7 +696,8 @@ async function overview({ tenantId, req }) {
     RawPunchLog.find({ tenantId, source: 'ADMS' }).sort({ receivedAt: -1, timestamp: -1 }).limit(60)
       .populate('employeeId', 'firstName lastName employeeCode').lean(),
     RawPunchLog.countDocuments({ tenantId, source: 'ADMS', timestamp: { $gte: todayStart } }),
-    RawPunchLog.countDocuments({ tenantId, source: 'ADMS', pending: true })
+    RawPunchLog.countDocuments({ tenantId, source: 'ADMS', pending: true }),
+    Tenant.findById(tenantId).select('admsRelayHost').lean()
   ]);
 
   // Which employee a machine ID belongs to — the same rule as for punches.
@@ -705,7 +759,7 @@ async function overview({ tenantId, req }) {
   for (const row of people) if (row.suggestion && picks.get(row.suggestion._id) !== row) delete row.suggestion;
 
   return {
-    connect: connectInfo(req),
+    connect: connectInfo(req, { relayHost: tenant?.admsRelayHost }),
     machines: devices.map((d) => ({
       _id: String(d._id),
       name: d.name,
@@ -730,6 +784,19 @@ async function overview({ tenantId, req }) {
     })),
     people,
     employees: employees.map((e) => ({ _id: String(e._id), name: fullName(e), employeeCode: e.employeeCode, machineId: e.biometric?.deviceUserId || '' })),
+    // Active employees no machine ID points to (not linked, not matched by code):
+    // the machine cannot count their attendance yet.
+    withoutMachineId: free.map((e) => {
+      const onMachine = people.find((row) => row.suggestion?._id === String(e._id));
+      return {
+        _id: String(e._id),
+        name: fullName(e),
+        employeeCode: e.employeeCode || '',
+        department: e.department || '',
+        suggestedPin: onMachine ? onMachine.pin : undefined,
+        suggestedName: onMachine ? onMachine.nameOnMachine : undefined
+      };
+    }),
     recent: recent.map((p) => ({
       _id: String(p._id),
       pin: p.deviceUserId,
@@ -770,5 +837,7 @@ module.exports = {
   linkMachineId,
   overview,
   connectInfo,
+  saveRelayHost,
+  checkRelay,
   forget
 };

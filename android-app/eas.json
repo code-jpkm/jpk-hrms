@@ -1,0 +1,24 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "env": {
+        "EXPO_PUBLIC_SERVER_URL": "https://jpk-hrms.onrender.com"
+      }
+    },
+    "production": {
+      "android": { "buildType": "app-bundle" },
+      "env": {
+        "EXPO_PUBLIC_SERVER_URL": "https://jpk-hrms.onrender.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

@@ -19,6 +19,7 @@ router.get('/raw-punches', requireAbility('BIOMETRIC', 'READ', 'SUPER_ADMIN', 'H
 router.get('/machines', requireAbility('BIOMETRIC', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.machines);
 router.post('/machines', requireAbility('BIOMETRIC', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.addMachine);
 router.post('/machines/link', requireAbility('BIOMETRIC', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.linkMachineId);
+router.post('/machines/relay', requireAbility('BIOMETRIC', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.saveRelay);
 router.post('/machines/process', requireAbility('BIOMETRIC', 'SYNC', 'SUPER_ADMIN', 'HR_ADMIN'), controller.processMachinePunches);
 router.post('/machines/:id/approve', requireAbility('BIOMETRIC', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.approveMachine);
 router.patch('/machines/:id', requireAbility('BIOMETRIC', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.updateMachine);
