@@ -1,0 +1,750 @@
+const PDFDocument = require('pdfkit');
+const asyncHandler = require('../utils/asyncHandler');
+const ApiError = require('../utils/apiError');
+const Employee = require('../models/Employee');
+const Attendance = require('../models/Attendance');
+const Holiday = require('../models/Holiday');
+const ShiftAssignment = require('../models/ShiftAssignment');
+const PayrollRule = require('../models/PayrollRule');
+const PayrollRun = require('../models/PayrollRun');
+const SalaryMaster = require('../models/SalaryMaster');
+const SalarySlip = require('../models/SalarySlip');
+const PayslipTemplate = require('../models/PayslipTemplate');
+const RuleAudit = require('../models/RuleAudit');
+const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, holidayAppliesTo, companyToday } = require('../utils/date');
+const { calculateSalary, calculateStatutoryDeductions, roundMoney } = require('../utils/salary');
+const { readWorkbookRows, workbookBuffer } = require('../utils/excel');
+const { getActiveSalaryMastersMap } = require('../services/salaryMasterService');
+const { evaluateMonth } = require('../services/attendanceRulesService');
+const { getScopedEmployeeIds } = require('../services/scopeService');
+const { writePayslipPdfToStream, payslipPdfBuffer, getActivePayslipTemplate } = require('../services/payslipPdfService');
+const { notify, notifyLater, recipientsForRoles } = require('../services/messaging/dispatcher');
+const { randomToken, hashToken } = require('../utils/security');
+const env = require('../config/env');
+const { hasAbility } = require('../middleware/auth');
+const { notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
+
+async function attendanceStatsFor(employee, month, tenantId) {
+  const { from, to } = monthRange(month);
+  const today = companyToday();
+  const allDates = eachDate(from, to);
+  // v26: holidayDateKey was used here without being imported, so payroll for ANY
+  // month containing a holiday crashed with "holidayDateKey is not defined".
+  // The query is widened by a day because legacy rows were saved at IST midnight
+  // (18:30Z the previous UTC day) and a holiday on the 1st fell outside the range.
+  const holidays = await Holiday.find({ tenantId, date: { $gte: new Date(from.getTime() - 86400000), $lte: new Date(to.getTime() + 86400000) } });
+  const monthPrefix = month.slice(0, 7);
+  // An OFFICE-only holiday is a working day at the plant (and vice versa).
+  const holidayKeys = new Set(holidays
+    .filter((h) => !h.optional && holidayAppliesTo(h, employee.workLocation))
+    .map((h) => holidayDateKey(h))
+    .filter((key) => key.startsWith(monthPrefix)));
+  const assignments = await ShiftAssignment.find({
+    tenantId,
+    employeeId: employee._id,
+    fromDate: { $lte: to },
+    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: from } }]
+  }).populate('shiftId').sort('fromDate');
+  const joinDate = employee.dateOfJoining ? startOfDay(employee.dateOfJoining) : null;
+
+  function shiftForDay(day) {
+    return [...assignments].reverse().find((assignment) => {
+      const assignmentFrom = assignment.fromDate ? startOfDay(assignment.fromDate) : from;
+      const assignmentTo = assignment.toDate ? endOfDay(assignment.toDate) : to;
+      return day >= assignmentFrom && day <= assignmentTo;
+    })?.shiftId;
+  }
+
+  const workingDates = allDates.filter((d) => {
+    const day = startOfDay(d);
+    const key = dateKey(day);
+    if (joinDate && day < joinDate) return false;
+    // WAGES rule: payable working-day denominator is calendar days less Sundays.
+    // Holidays and shift templates do not silently reduce that statutory wage denominator.
+    if (employee.employeeCategory === 'WAGES') return day.getDay() !== 0;
+    if (holidayKeys.has(key)) return false;
+    const shift = shiftForDay(day);
+    const weeklyOffDays = Array.isArray(shift?.weeklyOffDays) ? shift.weeklyOffDays : [0];
+    return !weeklyOffDays.includes(day.getDay());
+  });
+
+  const attendance = await Attendance.find({
+    tenantId,
+    employeeId: employee._id,
+    date: { $gte: from, $lte: to }
+  });
+  const byDate = new Map(attendance.map((a) => [dateKey(a.date), a]));
+
+  let totalLopDays = 0;
+  let presentDays = 0;
+  let halfDays = 0;
+  let wfhDays = 0;
+  let leaveDays = 0;
+  let absentDays = 0;
+  let missingAbsentDays = 0;
+  let lateCount = 0;
+  let earlyLeaveCount = 0;
+  let scheduledFutureDays = 0;
+
+  for (const date of workingDates) {
+    const day = startOfDay(date);
+    const key = dateKey(day);
+    const record = byDate.get(key);
+
+    // Future duty dates are planned workdays, not absences. For the current month,
+    // today is also treated as pending unless attendance is already completed or a
+    // protected paid status has been recorded.
+    if (day > today) {
+      scheduledFutureDays += 1;
+      continue;
+    }
+    if (day.getTime() === today.getTime() && (!record || (record.checkIn && !record.checkOut))) {
+      scheduledFutureDays += 1;
+      continue;
+    }
+
+    if (!record) {
+      absentDays += 1;
+      missingAbsentDays += 1;
+      totalLopDays += 1;
+      continue;
+    }
+
+    lateCount += Number(record.lateMinutes || 0) > 0 ? 1 : 0;
+    earlyLeaveCount += Number(record.earlyLeaveMinutes || 0) > 0 ? 1 : 0;
+
+    const explicitLop = Math.max(0, Number(record.lopDays || 0));
+    if (record.status === 'ABSENT') {
+      absentDays += 1;
+      totalLopDays += Math.max(1, explicitLop);
+    } else if (record.status === 'HALF_DAY') {
+      halfDays += 1;
+      totalLopDays += Math.max(0.5, explicitLop);
+    } else {
+      if (record.status === 'PRESENT') presentDays += 1;
+      if (record.status === 'WFH') wfhDays += 1;
+      if (record.status === 'LEAVE') leaveDays += record.dayPart === 'FULL' ? 1 : 0.5;
+      totalLopDays += explicitLop;
+    }
+  }
+
+  const workingDays = workingDates.length;
+  const attendanceLopDays = Math.min(Math.max(totalLopDays, 0), workingDays);
+  const payableDays = Math.max(0, workingDays - attendanceLopDays);
+
+  return {
+    workingDays,
+    payableDays,
+    presentDays,
+    halfDays,
+    wfhDays,
+    leaveDays,
+    attendanceLopDays,
+    lateCount,
+    earlyLeaveCount,
+    absentDays,
+    missingAbsentDays,
+    scheduledFutureDays
+  };
+}
+
+function csvEscape(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+async function salarySheetRows(req, runId) {
+  const runDoc = await PayrollRun.findOne({ _id: runId, tenantId: req.tenantId });
+  if (!runDoc) throw new ApiError(404, 'Payroll run not found');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: runDoc._id, employeeId: { $in: allowed } }).populate('employeeId', 'employeeCode firstName lastName department designation');
+  const rows = slips.map((s) => ({
+    employeeCode: s.employeeId?.employeeCode || '',
+    name: `${s.employeeId?.firstName || ''} ${s.employeeId?.lastName || ''}`.trim(),
+    department: s.employeeId?.department || '',
+    designation: s.employeeId?.designation || '',
+    workingDays: s.attendanceStats?.workingDays || 0,
+    payableDays: s.attendanceStats?.payableDays || 0,
+    lopDays: s.attendanceStats?.attendanceLopDays || 0,
+    basic: s.earnings?.basic || 0,
+    hra: s.earnings?.hra || 0,
+    conveyance: s.earnings?.conveyance || 0,
+    specialAllowance: s.earnings?.specialAllowance || 0,
+    gross: s.earnings?.proratedGross || 0,
+    pf: s.deductions?.pf || 0,
+    esi: s.deductions?.esi || 0,
+    ptax: s.deductions?.ptax || 0,
+    totalDeductions: s.deductions?.total || 0,
+    netPay: s.netPay || 0
+  }));
+  const run = runDoc.toObject();
+  run.summary = {
+    employeeCount: slips.length,
+    grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.proratedGross || 0), 0)),
+    deductionTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.deductions?.total || 0), 0)),
+    netTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.netPay || 0), 0))
+  };
+  return { run, rows };
+}
+
+
+function n(value) { return Number(value || 0); }
+function normalizeSalaryMasterBody(body) {
+  const srcEarnings = body.earnings || {};
+  const srcDeductions = body.deductions || {};
+  const earnings = {
+    basic: n(srcEarnings.basic ?? body.basic),
+    hra: n(srcEarnings.hra ?? body.hra),
+    conveyance: n(srcEarnings.conveyance ?? body.conveyance),
+    specialAllowance: n(srcEarnings.specialAllowance ?? body.specialAllowance),
+    otherEarnings: n(srcEarnings.otherEarnings ?? body.otherEarnings)
+  };
+  const deductions = {
+    pf: n(srcDeductions.pf ?? body.pf),
+    esi: n(srcDeductions.esi ?? body.esi),
+    ptax: n(srcDeductions.ptax ?? body.ptax),
+    otherDeductions: n(srcDeductions.otherDeductions ?? body.otherDeductions)
+  };
+  const grossSalary = earnings.basic + earnings.hra + earnings.conveyance + earnings.specialAllowance + earnings.otherEarnings;
+  const totalDeductions = deductions.pf + deductions.esi + deductions.ptax + deductions.otherDeductions;
+  return {
+    employeeId: body.employeeId,
+    effectiveMonth: body.effectiveMonth,
+    earnings,
+    deductions,
+    grossSalary,
+    totalDeductions,
+    netSalary: grossSalary - totalDeductions,
+    calculationMode: body.calculationMode || 'RULE_BASED_DEDUCTIONS',
+    notes: body.notes || '',
+    locked: Boolean(body.locked)
+  };
+}
+
+
+async function activePayrollRule(tenantId) {
+  return PayrollRule.findOneAndUpdate(
+    { tenantId, active: true },
+    { $setOnInsert: { tenantId, active: true, name: 'Default Payroll Rule' } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+}
+
+async function autoSalaryPayload({ tenantId, employee, payload }) {
+  if (payload.calculationMode !== 'RULE_BASED_DEDUCTIONS') return payload;
+  const rule = await activePayrollRule(tenantId);
+  const draft = { ...payload, deductions: { ...(payload.deductions || {}) } };
+  const statutory = calculateStatutoryDeductions({ employee, rule, salaryMaster: draft });
+  payload.deductions = {
+    pf: statutory.pf,
+    esi: statutory.esi,
+    ptax: statutory.ptax,
+    otherDeductions: Number(payload.deductions?.otherDeductions || 0)
+  };
+  payload.totalDeductions = payload.deductions.pf + payload.deductions.esi + payload.deductions.ptax + payload.deductions.otherDeductions;
+  payload.netSalary = payload.grossSalary - payload.totalDeductions;
+  return payload;
+}
+
+function normalizeExcelSalaryRow(row) {
+  return {
+    employeeCode: String(row.employeeCode || row['Employee Code'] || row['EmployeeCode'] || '').trim(),
+    effectiveMonth: String(row.effectiveMonth || row['Effective Month'] || row['EffectiveMonth'] || '').trim(),
+    earnings: {
+      basic: n(row.basic ?? row['Basic']),
+      hra: n(row.hra ?? row['HRA']),
+      conveyance: n(row.conveyance ?? row['Conveyance']),
+      specialAllowance: n(row.specialAllowance ?? row['Special Allowance']),
+      otherEarnings: n(row.otherEarnings ?? row['Other Earnings'])
+    },
+    deductions: { otherDeductions: n(row.otherDeductions ?? row['Other Deductions']) },
+    calculationMode: String(row.calculationMode || row['Calculation Mode'] || 'RULE_BASED_DEDUCTIONS').trim().toUpperCase(),
+    notes: String(row.notes || row['Notes'] || 'Excel salary import').trim()
+  };
+}
+
+exports.employees = asyncHandler(async (req, res) => {
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const employees = await Employee.find({ tenantId: req.tenantId, _id: { $in: allowed }, status: { $ne: 'OFFBOARDED' } })
+    .select('employeeCode firstName lastName department designation workLocation employeeCategory statutory.pfApplicable statutory.esiApplicable statutory.ptaxApplicable status')
+    .sort('employeeCode');
+  res.json({ employees });
+});
+
+exports.salaryMasters = asyncHandler(async (req, res) => {
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const q = { tenantId: req.tenantId, employeeId: { $in: allowed } };
+  if (req.query.employeeId) {
+    if (!allowed.includes(String(req.query.employeeId))) throw new ApiError(403, 'Salary master is outside your Office / Factory scope');
+    q.employeeId = req.query.employeeId;
+  }
+  if (req.query.effectiveMonth) q.effectiveMonth = req.query.effectiveMonth;
+  if (req.query.activeAt) q.effectiveMonth = { $lte: req.query.activeAt };
+  let masters = await SalaryMaster.find(q).populate('employeeId', 'employeeCode firstName lastName department designation').sort('employeeId -effectiveMonth -updatedAt');
+  if (req.query.activeAt) {
+    const seen = new Set();
+    masters = masters.filter((m) => {
+      const key = String(m.employeeId?._id || m.employeeId);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  res.json({ salaryMasters: masters });
+});
+
+exports.upsertSalaryMaster = asyncHandler(async (req, res) => {
+  const payload = normalizeSalaryMasterBody(req.body);
+  if (!payload.employeeId) throw new ApiError(400, 'Employee is required');
+  if (!/^\d{4}-\d{2}$/.test(payload.effectiveMonth || '')) throw new ApiError(400, 'Effective month must be YYYY-MM');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (!allowed.includes(String(payload.employeeId))) throw new ApiError(403, 'Employee salary is outside your Office / Factory scope');
+  const employee = await Employee.findOne({ _id: payload.employeeId, tenantId: req.tenantId });
+  if (!employee) throw new ApiError(404, 'Employee not found');
+  await autoSalaryPayload({ tenantId: req.tenantId, employee, payload });
+  const before = await SalaryMaster.findOne({ tenantId: req.tenantId, employeeId: payload.employeeId, effectiveMonth: payload.effectiveMonth }).lean();
+  if (before?.locked && req.user.role !== 'SUPER_ADMIN') throw new ApiError(403, 'This salary master is locked. Only super admin can change it.');
+  const master = await SalaryMaster.findOneAndUpdate(
+    { tenantId: req.tenantId, employeeId: payload.employeeId, effectiveMonth: payload.effectiveMonth },
+    { ...payload, tenantId: req.tenantId, updatedBy: req.user._id, ...(before ? {} : { createdBy: req.user._id }) },
+    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+  ).populate('employeeId', 'employeeCode firstName lastName department designation');
+
+  // Keep old employee.salary fields in sync so old screens still show basic/gross.
+  employee.salary = {
+    ...(employee.salary || {}),
+    basic: master.earnings.basic,
+    hra: master.earnings.hra,
+    conveyance: master.earnings.conveyance,
+    specialAllowance: master.earnings.specialAllowance,
+    allowances: master.earnings.otherEarnings,
+    gross: master.grossSalary,
+    pfNumber: employee.salary?.pfNumber,
+    esiNumber: employee.salary?.esiNumber,
+    pan: employee.salary?.pan,
+    bankAccountLast4: employee.salary?.bankAccountLast4
+  };
+  await employee.save();
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'SALARY_MASTER', action: before ? 'UPDATE_SALARY_MASTER' : 'CREATE_SALARY_MASTER', targetId: String(master._id), before, after: master.toObject(), reason: payload.notes || 'Manual salary master change', changedBy: req.user._id });
+  res.status(before ? 200 : 201).json({ salaryMaster: master });
+});
+
+exports.bulkUpsertSalaryMasters = asyncHandler(async (req, res) => {
+  const rows = req.body.rows || [];
+  if (!Array.isArray(rows) || !rows.length) throw new ApiError(400, 'rows array is required');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const results = [];
+  for (const row of rows) {
+    const code = String(row.employeeCode || row.code || '').trim();
+    const employee = await Employee.findOne({ tenantId: req.tenantId, employeeCode: code, _id: { $in: allowed } });
+    if (!employee) {
+      results.push({ employeeCode: code, status: 'SKIPPED', reason: 'Employee not found or outside salary scope' });
+      continue;
+    }
+    const payload = normalizeSalaryMasterBody({ ...row, employeeId: employee._id });
+    await autoSalaryPayload({ tenantId: req.tenantId, employee, payload });
+    if (!/^\d{4}-\d{2}$/.test(payload.effectiveMonth || '')) {
+      results.push({ employeeCode: code, status: 'SKIPPED', reason: 'effectiveMonth must be YYYY-MM' });
+      continue;
+    }
+    const master = await SalaryMaster.findOneAndUpdate(
+      { tenantId: req.tenantId, employeeId: employee._id, effectiveMonth: payload.effectiveMonth },
+      { ...payload, tenantId: req.tenantId, updatedBy: req.user._id },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    );
+    employee.salary = { ...(employee.salary || {}), basic: master.earnings.basic, hra: master.earnings.hra, conveyance: master.earnings.conveyance, specialAllowance: master.earnings.specialAllowance, allowances: master.earnings.otherEarnings, gross: master.grossSalary };
+    await employee.save();
+    results.push({ employeeCode: code, status: 'SAVED', grossSalary: master.grossSalary, netSalary: master.netSalary });
+  }
+  res.json({ saved: results.filter((r) => r.status === 'SAVED').length, results });
+});
+
+
+exports.salaryImportTemplate = asyncHandler(async (req, res) => {
+  const headers = ['Employee Code','Effective Month','Basic','HRA','Conveyance','Special Allowance','Other Earnings','Other Deductions','Calculation Mode','Notes'];
+  const buffer = workbookBuffer({
+    sheetName: 'Salary Masters', headers,
+    instructions: [
+      'PF, ESI and Professional Tax are intentionally not input columns: HRMS calculates them automatically from the active payroll rule and each employee statutory applicability.',
+      'Effective Month format: YYYY-MM.',
+      'Calculation Mode should normally remain RULE_BASED_DEDUCTIONS.',
+      'Existing Employee Code + Effective Month rows are updated; new months are created.'
+    ]
+  });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="JPK-Salary-Master-Import-Template.xlsx"');
+  res.end(buffer);
+});
+
+exports.importSalaryMastersExcel = asyncHandler(async (req, res) => {
+  const rows = readWorkbookRows(req.body.dataUrl).map(normalizeExcelSalaryRow).filter((row) => row.employeeCode);
+  if (!rows.length) throw new ApiError(400, 'No salary rows found in the first Excel sheet');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const results = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    try {
+      const employee = await Employee.findOne({ tenantId: req.tenantId, employeeCode: row.employeeCode, _id: { $in: allowed } });
+      if (!employee) throw new Error('Employee not found or outside salary scope');
+      const payload = normalizeSalaryMasterBody({ ...row, employeeId: employee._id });
+      if (!/^\d{4}-\d{2}$/.test(payload.effectiveMonth || '')) throw new Error('Effective Month must be YYYY-MM');
+      await autoSalaryPayload({ tenantId: req.tenantId, employee, payload });
+      const master = await SalaryMaster.findOneAndUpdate(
+        { tenantId: req.tenantId, employeeId: employee._id, effectiveMonth: payload.effectiveMonth },
+        { ...payload, tenantId: req.tenantId, updatedBy: req.user._id },
+        { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+      );
+      employee.salary = { ...(employee.salary || {}), basic: master.earnings.basic, hra: master.earnings.hra, conveyance: master.earnings.conveyance, specialAllowance: master.earnings.specialAllowance, allowances: master.earnings.otherEarnings, gross: master.grossSalary };
+      await employee.save();
+      results.push({ row: index + 2, employeeCode: row.employeeCode, status: 'SAVED', grossSalary: master.grossSalary, pf: master.deductions.pf, esi: master.deductions.esi, ptax: master.deductions.ptax, netSalary: master.netSalary });
+    } catch (error) {
+      results.push({ row: index + 2, employeeCode: row.employeeCode, status: 'ERROR', reason: error.message });
+    }
+  }
+  res.json({ saved: results.filter((r) => r.status === 'SAVED').length, errors: results.filter((r) => r.status === 'ERROR').length, results });
+});
+
+exports.deleteSalaryMaster = asyncHandler(async (req, res) => {
+  const master = await SalaryMaster.findOne({ _id: req.params.id, tenantId: req.tenantId });
+  if (!master) throw new ApiError(404, 'Salary master not found');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (!allowed.includes(String(master.employeeId))) throw new ApiError(403, 'Salary master is outside your Office / Factory scope');
+  if (master.locked && req.user.role !== 'SUPER_ADMIN') throw new ApiError(403, 'This salary master is locked. Only super admin can delete it.');
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'SALARY_MASTER', action: 'DELETE_SALARY_MASTER', targetId: String(master._id), before: master.toObject(), reason: req.body?.reason || 'Salary master deleted', changedBy: req.user._id });
+  await master.deleteOne();
+  res.json({ deleted: true });
+});
+
+
+exports.rules = asyncHandler(async (req, res) => {
+  const rules = await PayrollRule.find({ tenantId: req.tenantId }).sort('-active');
+  res.json({ rules });
+});
+
+exports.upsertRule = asyncHandler(async (req, res) => {
+  const before = await PayrollRule.findOne({ tenantId: req.tenantId, active: true }).lean();
+  const rule = await PayrollRule.findOneAndUpdate({ tenantId: req.tenantId, active: true }, { ...req.body, tenantId: req.tenantId, active: true }, { upsert: true, new: true, setDefaultsOnInsert: true });
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYROLL', action: 'SAVE_PAYROLL_RULE', before, after: rule.toObject(), reason: req.body.notes || req.body.changeReason || 'Manual payroll statutory/deduction rule change', changedBy: req.user._id });
+  res.json({ rule });
+});
+
+exports.runs = asyncHandler(async (req, res) => {
+  const runs = await PayrollRun.find({ tenantId: req.tenantId }).sort('-month');
+  if (['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role)) return res.json({ runs });
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const scopedRuns = await Promise.all(runs.map(async (runDoc) => {
+    const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: runDoc._id, employeeId: { $in: allowed } }).select('earnings deductions netPay');
+    const run = runDoc.toObject();
+    run.summary = {
+      employeeCount: slips.length,
+      grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.proratedGross || 0), 0)),
+      deductionTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.deductions?.total || 0), 0)),
+      netTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.netPay || 0), 0))
+    };
+    return run;
+  }));
+  res.json({ runs: scopedRuns });
+});
+
+exports.runPayroll = asyncHandler(async (req, res) => {
+  const { month } = req.body;
+  if (!/^\d{4}-\d{2}$/.test(month || '')) throw new ApiError(400, 'month must be YYYY-MM');
+  const rule = await PayrollRule.findOne({ tenantId: req.tenantId, active: true });
+  if (!rule) throw new ApiError(400, 'Create a payroll rule first');
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  if (month > currentMonth) throw new ApiError(400, 'Payroll cannot be generated for a future month');
+
+  // v26: re-running a month silently reset a RELEASED run to DRAFT and rewrote
+  // slips employees had already received. Only Super Admin may regenerate a
+  // released month, and only by confirming it explicitly.
+  const existingRun = await PayrollRun.findOne({ tenantId: req.tenantId, month });
+  if (existingRun?.status === 'FINALIZED') {
+    if (req.user.role !== 'SUPER_ADMIN' || req.body.force !== true) {
+      throw new ApiError(409, `Payroll for ${month} is already released. Super Admin can regenerate it by confirming "force".`);
+    }
+    if (!String(req.body.reason || '').trim()) throw new ApiError(400, 'A reason is required to regenerate a released payroll month');
+  }
+
+  // People who joined after the month ended have no payable days in it; they
+  // used to receive a slip with net pay of -₹200 (professional tax on nothing).
+  const { to: monthEnd } = monthRange(month);
+  const employees = (await Employee.find({ tenantId: req.tenantId, status: { $ne: 'OFFBOARDED' } }))
+    .filter((e) => !e.dateOfJoining || new Date(e.dateOfJoining) <= monthEnd);
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (employees.some((item) => !allowed.includes(String(item._id)))) {
+    throw new ApiError(403, 'Running merged company payroll requires salary access to both Office and Factory. Expand the Salary scope or ask Super Admin.');
+  }
+
+  // Re-evaluate all existing attendance records first so latest policy, permissions,
+  // worked duration and LOP overrides are reflected automatically in payroll.
+  await evaluateMonth({
+    tenantId: req.tenantId,
+    employeeIds: employees.map((e) => e._id),
+    month
+  });
+
+  const run = await PayrollRun.findOneAndUpdate(
+    { tenantId: req.tenantId, month },
+    { tenantId: req.tenantId, month, generatedBy: req.user._id, status: 'DRAFT' },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  if (existingRun?.status === 'FINALIZED') {
+    await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYROLL', action: 'REGENERATE_RELEASED_PAYROLL', targetId: String(run._id), before: existingRun.toObject(), reason: String(req.body.reason).trim(), changedBy: req.user._id });
+  }
+  // Manual adjustments made on the previous draft are kept and re-applied below;
+  // re-generating used to drop them from net pay while still showing them on the slip.
+  const previousSlips = await SalarySlip.find({ tenantId: req.tenantId, month }).select('employeeId manualAdjustments').lean();
+  const adjustmentsByEmployee = new Map(previousSlips.map((slip) => [String(slip.employeeId), slip.manualAdjustments]));
+  let grossTotal = 0;
+  let deductionTotal = 0;
+  let netTotal = 0;
+  const slips = [];
+  const salaryMasterMap = await getActiveSalaryMastersMap({ tenantId: req.tenantId, employeeIds: employees.map((e) => e._id), month });
+  for (const employee of employees) {
+    const stats = await attendanceStatsFor(employee, month, req.tenantId);
+    const salaryMaster = salaryMasterMap.get(String(employee._id));
+    const calc = calculateSalary({ employee, attendanceStats: stats, rule, salaryMaster });
+    const earnings = { basic: calc.basic, hra: calc.hra, conveyance: calc.conveyance, specialAllowance: calc.specialAllowance, otherEarnings: calc.otherEarnings, gross: calc.gross, proratedGross: calc.proratedGross, custom: calc.customEarnings || {} };
+    const adjustment = adjustmentsByEmployee.get(String(employee._id)) || null;
+    const earningAdj = Number(adjustment?.earningsAdjustment ?? adjustment?.earning ?? 0);
+    const deductionAdj = Number(adjustment?.deductionAdjustment ?? adjustment?.deduction ?? 0);
+    const netPay = roundMoney(calc.netPay + earningAdj - deductionAdj);
+    const slip = await SalarySlip.findOneAndUpdate(
+      { tenantId: req.tenantId, employeeId: employee._id, month },
+      { tenantId: req.tenantId, payrollRunId: run._id, employeeId: employee._id, month, attendanceStats: stats, earnings, deductions: calc.deductions, lop: calc.lop, salaryMasterId: calc.salaryMasterId, salaryMasterEffectiveMonth: calc.salaryMasterEffectiveMonth, netPay, generatedAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    grossTotal += calc.proratedGross;
+    deductionTotal += calc.deductions.total;
+    netTotal += netPay;
+    slips.push(slip);
+  }
+  run.summary = { employeeCount: employees.length, grossTotal: roundMoney(grossTotal), deductionTotal: roundMoney(deductionTotal), netTotal: roundMoney(netTotal) };
+  await run.save();
+  notifyLater({
+    tenantId: req.tenantId,
+    event: 'PAYROLL_GENERATED',
+    recipients: await recipientsForRoles(req.tenantId, ['SUPER_ADMIN', 'HR_ADMIN']),
+    path: '/payroll',
+    entityId: `${run._id}:${Date.now()}`,
+    actorUserId: req.user._id,
+    data: { month, count: employees.length, totalNet: `₹${roundMoney(netTotal).toLocaleString('en-IN')}`, by: req.user.name },
+    inApp: { type: 'PAYROLL_GENERATED', title: `Payroll generated for ${month}`, body: `${employees.length} employees processed. Net payroll: ₹${roundMoney(netTotal).toLocaleString('en-IN')}. Review the draft before sharing slips.`, entityType: 'PAYROLL_RUN', priority: 'HIGH' }
+  });
+  res.status(201).json({ run, slips, message: `Payroll for ${month} generated and attendance was recalculated first` });
+});
+
+exports.releaseRun = asyncHandler(async (req, res) => {
+  const run = await PayrollRun.findOne({ _id: req.params.runId, tenantId: req.tenantId });
+  if (!run) throw new ApiError(404, 'Payroll run not found');
+  if (run.status === 'FINALIZED') return res.json({ run, message: `Payroll for ${run.month} is already released` });
+
+  const before = run.toObject();
+  run.status = 'FINALIZED';
+  await run.save();
+  await RuleAudit.create({
+    tenantId: req.tenantId,
+    module: 'PAYROLL',
+    action: 'RELEASE_PAYROLL',
+    targetId: String(run._id),
+    before,
+    after: run.toObject(),
+    reason: req.body?.reason || `Payroll ${run.month} released`,
+    changedBy: req.user._id
+  });
+
+  const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id }).select('employeeId');
+  await Promise.all(slips.map((slip) => notifyEmployee({
+    tenantId: req.tenantId,
+    employeeId: slip.employeeId,
+    actorUserId: req.user._id,
+    type: 'PAYROLL_RELEASED',
+    title: `Payroll released · ${run.month}`,
+    body: `Payroll for ${run.month} has been released. Open Payroll to view your salary slip.`,
+    link: '/payroll',
+    entityType: 'PAYROLL_RUN',
+    entityId: run._id,
+    priority: 'NORMAL'
+  })));
+
+  res.json({ run, message: `Payroll for ${run.month} released successfully` });
+});
+
+exports.slips = asyncHandler(async (req, res) => {
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const q = { tenantId: req.tenantId, employeeId: { $in: allowed } };
+  if (req.query.month) q.month = req.query.month;
+  if (req.query.employeeId) {
+    if (!allowed.includes(String(req.query.employeeId))) throw new ApiError(403, 'Salary slip is outside your scope');
+    q.employeeId = req.query.employeeId;
+  }
+  // An employee must never see a slip from a run that is still being worked on.
+  // Admins keep full visibility so they can review drafts before releasing.
+  const isPayrollAdmin = ['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role)
+    || hasAbility(req.user, 'PAYROLL', 'RUN');
+  let slips = await SalarySlip.find(q)
+    .populate('employeeId', 'employeeCode firstName lastName department designation email phone salary')
+    .populate('payrollRunId', 'month status releasedAt')
+    .sort('-month');
+  if (!isPayrollAdmin) {
+    slips = slips.filter((slip) => slip.payrollRunId?.status === 'FINALIZED');
+  }
+  res.json({ slips, releasedOnly: !isPayrollAdmin });
+});
+
+exports.salarySheet = asyncHandler(async (req, res) => {
+  const { run, rows } = await salarySheetRows(req, req.params.runId);
+  res.json({ month: run.month, summary: run.summary, rows });
+});
+
+exports.salarySheetCsv = asyncHandler(async (req, res) => {
+  const { run, rows } = await salarySheetRows(req, req.params.runId);
+  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Gross', 'PF', 'ESI', 'PTax', 'Total Deductions', 'Net Pay'];
+  const body = rows.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.gross, r.pf, r.esi, r.ptax, r.totalDeductions, r.netPay].map(csvEscape).join(','));
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename=salary-sheet-${run.month}.csv`);
+  res.send([headers.join(','), ...body].join('\n'));
+});
+
+exports.salarySheetPdf = asyncHandler(async (req, res) => {
+  const { run, rows } = await salarySheetRows(req, req.params.runId);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename=salary-sheet-${run.month}.pdf`);
+  const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+  doc.pipe(res);
+  doc.fontSize(16).text(`Salary Sheet - ${run.month}`, { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(9).text(`Employees: ${run.summary?.employeeCount || rows.length}    Gross: Rs. ${run.summary?.grossTotal || 0}    Deductions: Rs. ${run.summary?.deductionTotal || 0}    Net: Rs. ${run.summary?.netTotal || 0}`);
+  doc.moveDown(0.8);
+  const cols = [30, 85, 175, 255, 330, 370, 420, 470, 530, 600, 650, 700, 745, 790];
+  const heads = ['Code', 'Name', 'Dept', 'Pay/Work', 'Basic', 'HRA', 'Conv', 'Spl', 'Gross', 'PF', 'ESI', 'PTax', 'Deduct', 'Net'];
+  let y = doc.y;
+  doc.fontSize(8).font('Helvetica-Bold');
+  heads.forEach((h, i) => doc.text(h, cols[i], y, { width: i === 1 ? 100 : 60 }));
+  doc.font('Helvetica');
+  y += 16;
+  for (const r of rows) {
+    if (y > 550) { doc.addPage(); y = 30; }
+    const vals = [r.employeeCode, r.name, r.department, `${r.payableDays}/${r.workingDays}`, r.basic, r.hra, r.conveyance, r.specialAllowance, r.gross, r.pf, r.esi, r.ptax, r.totalDeductions, r.netPay];
+    vals.forEach((v, i) => doc.text(String(v ?? ''), cols[i], y, { width: i === 1 ? 85 : 48 }));
+    y += 15;
+  }
+  doc.end();
+});
+
+async function findScopedSlip(req, slipId) {
+  const slip = await SalarySlip.findOne({ _id: slipId, tenantId: req.tenantId }).populate('employeeId').populate('payrollRunId');
+  if (!slip) throw new ApiError(404, 'Salary slip not found');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (!allowed.includes(String(slip.employeeId._id))) throw new ApiError(403, 'Salary slip is outside your scope');
+  return slip;
+}
+
+function isPayrollAdmin(user) {
+  return ['SUPER_ADMIN', 'HR_ADMIN'].includes(user.role) || hasAbility(user, 'PAYROLL', 'RUN');
+}
+
+exports.slipPdf = asyncHandler(async (req, res) => {
+  const slip = await findScopedSlip(req, req.params.id);
+  // v26: the slip list hid drafts from employees, but the PDF link still served them.
+  if (!isPayrollAdmin(req.user) && slip.payrollRunId?.status !== 'FINALIZED') throw new ApiError(404, 'Salary slip not found');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="salary-slip-${slip.employeeId.employeeCode}-${slip.month}.pdf"`);
+  await writePayslipPdfToStream({ tenantId: req.tenantId, slip, stream: res });
+});
+
+exports.publicSlipPdf = asyncHandler(async (req, res) => {
+  const slip = await SalarySlip.findById(req.params.id).populate('employeeId').populate('payrollRunId');
+  if (!slip || !req.query.token || !slip.shareTokenHash || slip.shareTokenExpiresAt < new Date()) throw new ApiError(404, 'Salary slip link expired or invalid');
+  if (hashToken(req.query.token) !== slip.shareTokenHash) throw new ApiError(404, 'Salary slip link expired or invalid');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="salary-slip-${slip.employeeId.employeeCode}-${slip.month}.pdf"`);
+  await writePayslipPdfToStream({ tenantId: slip.tenantId, slip, stream: res });
+});
+
+exports.template = asyncHandler(async (req, res) => {
+  const { template } = await getActivePayslipTemplate(req.tenantId);
+  res.json({ template });
+});
+
+exports.saveTemplate = asyncHandler(async (req, res) => {
+  const before = await PayslipTemplate.findOne({ tenantId: req.tenantId, active: true }).lean();
+  await PayslipTemplate.updateMany({ tenantId: req.tenantId }, { active: false });
+  const template = await PayslipTemplate.create({ ...req.body, tenantId: req.tenantId, active: true });
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYSLIP', action: 'SAVE_PAYSLIP_TEMPLATE', before, after: template.toObject(), reason: req.body.changeReason || 'Manual payslip PDF format change', changedBy: req.user._id });
+  res.status(201).json({ template });
+});
+
+exports.adjustSlip = asyncHandler(async (req, res) => {
+  const slip = await findScopedSlip(req, req.params.id);
+  if (!['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role) && !hasAbility(req.user, 'PAYROLL', 'ADJUST')) throw new ApiError(403, 'Only permitted users can adjust slips');
+  const { earningsAdjustment = 0, deductionAdjustment = 0, reason = '' } = req.body;
+  const before = slip.toObject();
+  const previousEarningAdjustment = Number(slip.manualAdjustments?.earningsAdjustment ?? slip.manualAdjustments?.earning ?? 0);
+  const previousDeductionAdjustment = Number(slip.manualAdjustments?.deductionAdjustment ?? slip.manualAdjustments?.deduction ?? 0);
+  const baseNetPay = Number(slip.netPay || 0) - previousEarningAdjustment + previousDeductionAdjustment;
+  const nextEarningAdjustment = Number(earningsAdjustment || 0);
+  const nextDeductionAdjustment = Number(deductionAdjustment || 0);
+  slip.manualAdjustments = {
+    earningsAdjustment: nextEarningAdjustment,
+    deductionAdjustment: nextDeductionAdjustment,
+    reason,
+    adjustedBy: req.user._id,
+    adjustedAt: new Date()
+  };
+  slip.netPay = roundMoney(baseNetPay + nextEarningAdjustment - nextDeductionAdjustment);
+  await slip.save();
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYROLL', action: 'SALARY_SLIP_MANUAL_ADJUSTMENT', targetId: String(slip._id), before, after: slip.toObject(), reason, changedBy: req.user._id });
+  res.json({ slip });
+});
+
+exports.shareSlips = asyncHandler(async (req, res) => {
+  const { month, employeeIds = [], salarySlipIds = [], channels = { email: true, whatsapp: true }, message = '' } = req.body;
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (employeeIds.some((id) => !allowed.includes(String(id)))) throw new ApiError(403, 'One or more selected employees are outside your salary scope');
+  const q = { tenantId: req.tenantId, employeeId: { $in: allowed } };
+  if (salarySlipIds.length) q._id = { $in: salarySlipIds };
+  if (employeeIds.length) q.employeeId = { $in: employeeIds };
+  if (month) q.month = month;
+  if (!salarySlipIds.length && !employeeIds.length) throw new ApiError(400, 'Select at least one employee or salary slip');
+  const slips = await SalarySlip.find(q).populate('employeeId', 'employeeCode firstName lastName email phone salary department designation').populate('payrollRunId', 'month status');
+  if (salarySlipIds.length && slips.length !== new Set(salarySlipIds.map(String)).size) throw new ApiError(403, 'One or more selected salary slips are outside your salary scope');
+  // Employees cannot open a draft slip in the portal, so sharing one sends them a
+  // link to something they cannot see yet. Release the month first (or confirm).
+  const drafts = slips.filter((slip) => slip.payrollRunId?.status !== 'FINALIZED');
+  if (drafts.length && req.body.allowDraft !== true) {
+    throw new ApiError(409, `${drafts.length} selected slip(s) belong to a payroll month that is not released yet. Release payroll first, or confirm sharing the draft.`);
+  }
+  const results = [];
+  for (const slip of slips) {
+    const employee = slip.employeeId;
+    const token = randomToken(24);
+    slip.shareTokenHash = hashToken(token);
+    slip.shareTokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    slip.lastSharedAt = new Date();
+    slip.sharedBy = req.user._id;
+    slip.sharedChannels = [];
+    const link = `${env.publicApiUrl}/api/payroll/public/slips/${slip._id}/pdf?token=${encodeURIComponent(token)}`;
+    const pdf = await payslipPdfBuffer({ tenantId: req.tenantId, slip });
+    const name = `${employee.firstName || ''} ${employee.lastName || ''}`.trim();
+    if (channels.email !== false) slip.sharedChannels.push('EMAIL');
+    if (channels.whatsapp !== false) slip.sharedChannels.push('WHATSAPP');
+    await slip.save();
+    // Queued, not sent inline: sharing 300 slips used to hold the request open
+    // for minutes while each SMTP call finished. Status appears in Integrations → Delivery log.
+    const logs = await notify({
+      tenantId: req.tenantId,
+      event: 'PAYSLIP_PUBLISHED',
+      recipients: [{ employeeId: employee._id }],
+      path: '/payroll',
+      entityId: `${slip._id}:${slip.lastSharedAt.getTime()}`,
+      actorUserId: req.user._id,
+      channels: { email: channels.email !== false, whatsapp: channels.whatsapp !== false },
+      data: { month: slip.month, employeeCode: employee.employeeCode, slipLink: link, attached: channels.email !== false, employeeName: name, note: message || '' },
+      attachments: [{ filename: `salary-slip-${employee.employeeCode}-${slip.month}.pdf`, contentType: 'application/pdf', contentBase64: pdf.toString('base64'), url: link }],
+      inApp: { type: 'PAYSLIP_READY', title: `Salary slip ready · ${slip.month}`, body: `Your salary slip for ${slip.month} is ready. Open Payroll to view the details.`, link: '/payroll', entityType: 'SALARY_SLIP' }
+    });
+    results.push({ slipId: slip._id, employeeCode: employee.employeeCode, link, logs });
+  }
+  res.json({ shared: results.length, results: results.map((r) => ({ ...r, logs: (r.logs || []).map((l) => ({ channel: l?.channel, status: l?.status, error: l?.error })) })), message: `${results.length} salary slip(s) shared. Email and WhatsApp are being delivered in the background.` });
+});
