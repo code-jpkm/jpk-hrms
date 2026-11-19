@@ -120,7 +120,10 @@ and a short tip; click it for humidity, wind, rain chance and PM2.5 / PM10.
 - Where: the browser's location, asked once and rounded to about 5 km, else the
   employee's office or factory site (Company settings → sites), else Kolkata.
   Sign-in pages show the main office.
-- The server caches each 5 km square (10 min weather, 30 min air).
+- The server caches each 5 km square (10 min weather, 30 min air). Free cloud
+  servers share their internet address, and Open-Meteo sometimes refuses it the
+  forecast; then each browser asks Open-Meteo itself (the answer's `nowError`
+  says why the server could not).
 - Preview: add `?sceneWeather=rain` (clear, partly, cloudy, fog, drizzle, rain,
   heavy, storm, snow) and `?sceneAqi=320` to any address; `?sceneAt=20:30` sets the time.
 - Check after a deploy: `https://jpk-hrms.onrender.com/api/weather/office`.

@@ -9,7 +9,10 @@
  *
  * Answers are cached per ~5 km square (10 min weather, 30 min air), so one
  * office shares one lookup. If Open-Meteo is slow or down, the last answer
- * (up to 3 hours old) is used; with nothing at all the page keeps its normal sky.
+ * (up to 3 hours old) is used. If there is still no weather, the answer says
+ * why (nowError) and gives the rounded point, so the browser can ask
+ * Open-Meteo itself: free cloud servers share their internet address with
+ * many other apps and Open-Meteo sometimes limits that address.
  *
  * The free API is for non-commercial use. With a paid plan set
  * OPEN_METEO_API_KEY and the customer-* servers are used instead.
@@ -24,6 +27,8 @@ const WEATHER_TTL = 10 * 60 * 1000;
 const AIR_TTL = 30 * 60 * 1000;
 const KEEP_STALE = 3 * 60 * 60 * 1000;
 const RETRY_AFTER_FAIL = 60 * 1000;
+const RETRY_AFTER_LIMIT = 15 * 60 * 1000; // Open-Meteo said "too many requests"
+
 const MAX_ENTRIES = 400;
 const GRID = 0.05; // ~5 km: plenty for weather, and no exact address leaves the server
 
@@ -215,9 +220,18 @@ async function fetchJson(base, params) {
   const url = new URL(base);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
   if (KEY) url.searchParams.set('apikey', KEY);
-  const res = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { 'User-Agent': 'JPK-HRMS weather scenery' } });
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { 'User-Agent': 'JPK-HRMS weather scenery' } });
+  } catch (error) {
+    throw new Error(error?.name === 'TimeoutError' ? 'Open-Meteo did not answer in 7 s' : `Could not reach Open-Meteo (${error?.cause?.code || error?.message || 'network'})`);
+  }
   const body = await res.json().catch(() => null);
-  if (!res.ok || !body || body.error) throw new Error(body?.reason || `Open-Meteo answered ${res.status}`);
+  if (!res.ok || !body || body.error) {
+    const err = new Error(`Open-Meteo ${res.status}${body?.reason ? `: ${body.reason}` : ''}`.slice(0, 160));
+    err.limited = res.status === 429 || /limit/i.test(body?.reason || '');
+    throw err;
+  }
   return body;
 }
 
@@ -233,25 +247,28 @@ function remember(map, key, entry) {
   }
 }
 
+/** → { value, at, stale } or { value: null, error } (never throws). */
 function cached(map, key, ttl, load) {
   const now = Date.now();
   const hit = map.get(key);
+  const staleOrError = (entry) => (entry?.value && now - entry.at < KEEP_STALE
+    ? { value: entry.value, at: entry.at, stale: true, error: entry.error }
+    : { value: null, error: entry?.error || 'no answer yet' });
   if (hit?.value && now - hit.at < ttl) return Promise.resolve({ value: hit.value, at: hit.at });
   if (hit?.pending) return hit.pending;
-  if (hit?.failedAt && now - hit.failedAt < RETRY_AFTER_FAIL) {
-    return hit.value && now - hit.at < KEEP_STALE ? Promise.resolve({ value: hit.value, at: hit.at, stale: true }) : Promise.resolve(null);
-  }
+  if (hit?.failedAt && now - hit.failedAt < (hit.wait || RETRY_AFTER_FAIL)) return Promise.resolve(staleOrError(hit));
   const pending = load()
     .then((value) => {
-      if (!value) throw new Error('empty answer');
+      if (!value) throw new Error('Open-Meteo sent an answer without the values');
       remember(map, key, { value, at: Date.now() });
       return { value, at: Date.now() };
     })
     .catch((error) => {
       const old = map.get(key) || {};
-      remember(map, key, { value: old.value, at: old.at, failedAt: Date.now() });
+      const entry = { value: old.value, at: old.at, failedAt: Date.now(), wait: error.limited ? RETRY_AFTER_LIMIT : RETRY_AFTER_FAIL, error: error.message };
+      remember(map, key, entry);
       if (process.env.NODE_ENV !== 'test') console.warn(`[weather] ${key}: ${error.message}`);
-      return old.value && now - old.at < KEEP_STALE ? { value: old.value, at: old.at, stale: true } : null;
+      return staleOrError(entry);
     });
   remember(map, key, { ...(hit || {}), pending });
   return pending;
@@ -259,7 +276,8 @@ function cached(map, key, ttl, load) {
 
 /**
  * Weather + air for a point. Returns null only when neither is available.
- * { at, now, air } — `now` or `air` may be null on their own.
+ * { at, point, now, air, nowError?, airError? } — `now` or `air` may be null on
+ * their own; point is the ~5 km square that was looked up.
  */
 async function lookup(point) {
   const p = snapPoint(point?.lat, point?.lon);
@@ -284,8 +302,16 @@ async function lookup(point) {
       forecast_days: 1
     })))
   ]);
-  if (!w && !a) return null;
-  return { at: new Date(w?.at || a?.at).toISOString(), stale: Boolean(w?.stale), now: w?.value || null, air: a?.value || null };
+  if (!w?.value && !a?.value) return null;
+  return {
+    at: new Date(w?.value ? w.at : a.at).toISOString(),
+    stale: Boolean(w?.stale),
+    point: p,
+    now: w?.value || null,
+    air: a?.value || null,
+    ...(w?.value ? {} : { nowError: w?.error || 'unavailable' }),
+    ...(a?.value ? {} : { airError: a?.error || 'unavailable' })
+  };
 }
 
 function clearCache() { weatherCache.clear(); airCache.clear(); }

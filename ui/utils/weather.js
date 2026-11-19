@@ -9,6 +9,10 @@ import { api, getToken, post } from '../api/client.js';
  * main site. The last answer is kept in this browser so the next page opens
  * with the right sky straight away; it is refreshed every 15 minutes.
  *
+ * If the server could not get the forecast (free cloud servers share their
+ * internet address and Open-Meteo sometimes limits it), this browser asks
+ * Open-Meteo itself for the same rounded spot.
+ *
  * Preview any weather with ?sceneWeather=rain (clear, partly, cloudy, fog,
  * drizzle, rain, heavy, storm, snow) and ?sceneAqi=250 in the address bar.
  */
@@ -58,6 +62,84 @@ function devicePoint() {
   });
 }
 
+// ---------------------------------------------------------------- forecast straight from the browser
+// Same reading as server/src/services/weatherService.js (keep the two in step).
+const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const CODES = {
+  0: ['clear', 0, 'Clear sky'], 1: ['clear', 0.2, 'Mostly clear'], 2: ['partly', 0.5, 'Partly cloudy'], 3: ['cloudy', 0.9, 'Overcast'],
+  45: ['fog', 0.7, 'Fog'], 48: ['fog', 0.8, 'Freezing fog'],
+  51: ['drizzle', 0.25, 'Light drizzle'], 53: ['drizzle', 0.45, 'Drizzle'], 55: ['drizzle', 0.65, 'Heavy drizzle'], 56: ['drizzle', 0.3, 'Freezing drizzle'], 57: ['drizzle', 0.6, 'Freezing drizzle'],
+  61: ['rain', 0.35, 'Light rain'], 63: ['rain', 0.65, 'Rain'], 65: ['rain', 1, 'Heavy rain'], 66: ['rain', 0.4, 'Freezing rain'], 67: ['rain', 0.85, 'Freezing rain'],
+  71: ['snow', 0.35, 'Light snow'], 73: ['snow', 0.6, 'Snow'], 75: ['snow', 0.9, 'Heavy snow'], 77: ['snow', 0.4, 'Snow grains'],
+  80: ['rain', 0.4, 'Light showers'], 81: ['rain', 0.7, 'Rain showers'], 82: ['rain', 1, 'Heavy showers'], 85: ['snow', 0.45, 'Snow showers'], 86: ['snow', 0.85, 'Heavy snow showers'],
+  95: ['storm', 0.85, 'Thunderstorm'], 96: ['storm', 0.95, 'Thunderstorm with hail'], 99: ['storm', 1, 'Thunderstorm with hail']
+};
+const WET = ['drizzle', 'rain', 'storm'];
+const n = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const r0 = (v) => (n(v) === null ? null : Math.round(Number(v)));
+
+export function readForecast(body, nowMs = Date.now()) {
+  const c = body?.current;
+  if (!c || n(c.temperature_2m) === null) return null;
+  const code = r0(c.weather_code);
+  let [kind, level, label] = CODES[code] || ['cloudy', 0.6, 'Cloudy'];
+  const precip = n(c.precipitation) || 0;
+  if (!WET.includes(kind) && kind !== 'snow' && precip >= 0.2) [kind, level, label] = ['rain', precip >= 2 ? 0.7 : 0.35, precip >= 2 ? 'Rain' : 'Light rain'];
+  const offset = (n(body.utc_offset_seconds) || 0) * 1000;
+  const times = (body.hourly?.time || []).map((t) => Date.parse(`${t}Z`) - offset);
+  const prob = body.hourly?.precipitation_probability || [];
+  const mm = body.hourly?.precipitation || [];
+  const wet = WET.includes(kind);
+  const hour = 3600 * 1000;
+  let rainChance = 0;
+  let rainAt = null;
+  let dryAt = null;
+  times.forEach((t, i) => {
+    if (!Number.isFinite(t) || t < nowMs - hour || t > nowMs + 6 * hour) return;
+    const p = n(prob[i]) || 0;
+    const rr = n(mm[i]) || 0;
+    if (t <= nowMs + 3 * hour) rainChance = Math.max(rainChance, p);
+    if (t <= nowMs) return;
+    if (!wet && rainAt === null && (p >= 60 || rr >= 0.5)) rainAt = t;
+    if (wet && dryAt === null && p < 30 && rr < 0.1) dryAt = t;
+  });
+  return {
+    code, kind, level, label,
+    isDay: c.is_day === 1 || c.is_day === true,
+    temp: r0(c.temperature_2m), feels: r0(c.apparent_temperature), humidity: r0(c.relative_humidity_2m), cloud: r0(c.cloud_cover),
+    precip: n(precip) === null ? null : Math.round(precip * 10) / 10, wind: r0(c.wind_speed_10m), windDir: r0(c.wind_direction_10m),
+    high: r0(body.daily?.temperature_2m_max?.[0]), low: r0(body.daily?.temperature_2m_min?.[0]),
+    rainChance: r0(rainChance), rainAt: rainAt ? new Date(rainAt).toISOString() : null, dryAt: dryAt ? new Date(dryAt).toISOString() : null
+  };
+}
+
+/** Asks Open-Meteo from this browser for a rounded point. null when it can't. */
+async function forecastInBrowser(point) {
+  if (!point || typeof fetch !== 'function') return null;
+  const url = new URL(FORECAST_URL);
+  const params = {
+    latitude: point.lat,
+    longitude: point.lon,
+    current: 'temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m',
+    hourly: 'precipitation_probability,precipitation',
+    daily: 'temperature_2m_max,temperature_2m_min',
+    forecast_days: 2,
+    timezone: 'auto'
+  };
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? window.setTimeout(() => ctl.abort(), 8000) : null;
+  try {
+    const res = await fetch(url.toString(), { signal: ctl?.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+    const body = await res.json().catch(() => null);
+    return res.ok && body && !body.error ? readForecast(body) : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
 let pending = null;
 let triedDevice = false;
 
@@ -70,7 +152,8 @@ export function refreshWeather({ publicOnly = false, force = false, askLocation 
   if (pending) return pending;
   const saved = readSaved();
   const signedIn = !publicOnly && Boolean(getToken());
-  const fresh = saved && Date.now() - saved.savedAt < FRESH_MS;
+  // An answer without the forecast is retried after 2 minutes, not 15.
+  const fresh = saved && Date.now() - saved.savedAt < (saved.data.now ? FRESH_MS : 2 * 60 * 1000);
   if (!force && fresh && (!signedIn || saved.data.source === 'device' || triedDevice)) {
     if (state.data !== saved.data) emit({ data: saved.data });
     return Promise.resolve(saved.data);
@@ -79,9 +162,9 @@ export function refreshWeather({ publicOnly = false, force = false, askLocation 
   pending = (async () => {
     emit({ loading: true });
     let data = null;
+    let point = null;
     if (signedIn) {
       triedDevice = true;
-      let point = null;
       const permission = await locationPermission();
       if (permission === 'granted' || askLocation || (permission !== 'denied' && !read(ASKED_KEY))) {
         write(ASKED_KEY, '1');
@@ -93,6 +176,16 @@ export function refreshWeather({ publicOnly = false, force = false, askLocation 
     }
     if (!data?.ok) {
       try { data = await api('/weather/office', { toast: false }); } catch { data = null; }
+    }
+    // The server got the air but not the forecast: ask Open-Meteo from here.
+    if (data?.ok && !data.now && (data.point || point)) {
+      const now = await forecastInBrowser(data.point || point);
+      if (now) data = { ...data, now, at: new Date().toISOString(), nowFrom: 'browser' };
+    }
+    // The server answered nothing at all, but we know where this device is.
+    if (!data?.ok && point) {
+      const now = await forecastInBrowser(point);
+      if (now) data = { ok: true, source: 'device', place: 'Near you', at: new Date().toISOString(), point, now, air: null, nowFrom: 'browser' };
     }
     if (data?.ok) {
       write(SAVE_KEY, JSON.stringify({ data, savedAt: Date.now() }));
