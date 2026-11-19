@@ -92,7 +92,8 @@ const ROUTE_TABLE = [
   ['/api/recruitment', './routes/recruitmentRoutes'],
   ['/api/ai', './routes/aiRoutes'],
   ['/api/integrations', './routes/integrationRoutes'],
-  ['/api/messages', './routes/messageRoutes']
+  ['/api/messages', './routes/messageRoutes'],
+  ['/api/weather', './routes/weatherRoutes']
 ];
 for (const [path, modulePath] of ROUTE_TABLE) app.use(path, require(modulePath));
 

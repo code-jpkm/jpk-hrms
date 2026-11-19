@@ -7,6 +7,7 @@ import { formatDate } from '../../utils/time.js';
 
 const ROLE_LABEL = { EMPLOYEE: 'Employee', MANAGER: 'Manager', HR_ADMIN: 'HR Admin', SUPER_ADMIN: 'Super Admin' };
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SUPER_NOTE = 'A Super Admin can do everything in the HRMS: every employee and salary, company settings, and other admins\' logins.';
 
 /** Where this person stands with the portal, in plain words. */
 export function portalState(employee, me) {
@@ -49,7 +50,8 @@ export default function PortalAccessCard({ employee, me, onChanged, onLoginResul
   const [role, setRole] = useState('EMPLOYEE');
   useEffect(() => { setEmail(''); setRole(u?.role || 'EMPLOYEE'); }, [employee?._id, u?.role]);
 
-  const roles = ['EMPLOYEE', 'MANAGER', ...(isSuperAdmin ? ['HR_ADMIN'] : [])];
+  // Admin roles are offered only to a Super Admin (the server checks this too).
+  const roles = ['EMPLOYEE', 'MANAGER', ...(isSuperAdmin ? ['HR_ADMIN', 'SUPER_ADMIN'] : [])];
   if (u?.role && !roles.includes(u.role)) roles.push(u.role);
   const adminLogin = ['SUPER_ADMIN', 'HR_ADMIN'].includes(u?.role) && !isSuperAdmin;
 
@@ -58,16 +60,25 @@ export default function PortalAccessCard({ employee, me, onChanged, onLoginResul
     try { await fn(); } catch (err) { toast.error(err?.message || 'That did not work. Try again.'); } finally { setBusy(''); }
   }
 
-  const giveAccess = () => run('give', async () => {
-    const res = await post(`/employees/${employee._id}/resend-login`, state === 'none' && !u ? { role } : {}, { toast: false });
+  // Making someone Super Admin is the one choice that asks first.
+  const superOk = (next, giving) => next !== 'SUPER_ADMIN' || window.confirm(`${giving ? `Give ${employee.firstName || 'this person'} portal access as a Super Admin?` : `Make ${employee.firstName || 'this person'} a Super Admin?`}\n\n${SUPER_NOTE}`);
+
+  const sendLogin = () => run('give', async () => {
+    const res = await post(`/employees/${employee._id}/resend-login`, !u ? { role } : {}, { toast: false });
     onLoginResult?.(res);
     onChanged?.();
   });
+
+  const giveAccess = () => {
+    if (!u && !superOk(role, true)) return;
+    sendLogin();
+  };
 
   const saveEmailAndGive = (event) => {
     event.preventDefault();
     const value = email.trim().toLowerCase();
     if (!EMAIL.test(value)) { toast.error('Type a full email address, for example name@jpkm.in'); return; }
+    if (!superOk(role, true)) return;
     run('give', async () => {
       await patch(`/employees/${employee._id}`, { email: value }, { toast: false });
       const res = await post(`/employees/${employee._id}/resend-login`, { role }, { toast: false });
@@ -78,7 +89,7 @@ export default function PortalAccessCard({ employee, me, onChanged, onLoginResul
 
   const newPassword = () => {
     if (!window.confirm(`Send ${employee.firstName || 'them'} a new temporary password?\n\nTheir current password stops working, and they are signed out until they use the new one.`)) return;
-    giveAccess();
+    sendLogin();
   };
 
   const turnOff = () => {
@@ -90,12 +101,15 @@ export default function PortalAccessCard({ employee, me, onChanged, onLoginResul
     });
   };
 
-  const changeRole = (next) => run('role', async () => {
-    await patch(`/employees/users/${u._id}/permissions`, { role: next }, { toast: false });
-    setRole(next);
-    toast.success(`${employee.firstName || 'Their'} portal role is now ${ROLE_LABEL[next] || next}.`);
-    onChanged?.();
-  });
+  const changeRole = (next) => {
+    if (!superOk(next, false)) return;
+    run('role', async () => {
+      await patch(`/employees/users/${u._id}/permissions`, { role: next }, { toast: false });
+      setRole(next);
+      toast.success(`${employee.firstName || 'Their'} portal role is now ${ROLE_LABEL[next] || next}.`);
+      onChanged?.();
+    });
+  };
 
   const roleSelect = (disabled, onChange) => (
     <label className="pa-role">

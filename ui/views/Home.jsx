@@ -7,6 +7,8 @@ import { canAccessPath } from '../utils/permissions.js';
 import { defaultFavouriteIds, usableQuickActions } from '../utils/nav.js';
 import { clockLabel, durationLabel, formatDayKey, formatTime, todayKey } from '../utils/time.js';
 import DayScene, { PERIOD_ICON, greetingAt, periodLine } from '../components/DayScene.jsx';
+import WeatherBadge from '../components/WeatherBadge.jsx';
+import { weatherIcon } from '../utils/weather.js';
 import { punchNow } from '../utils/punch.js';
 import { TeamToday } from '../components/dashboard/TodayStrip.jsx';
 import '../styles/v26.css';
@@ -38,16 +40,18 @@ export default function Home() {
     <div className="home">
       <section className="home-hero">
         <DayScene variant="hero" className="home-hero-scene">
-          {({ period, minutes, times }) => (
+          {({ period, minutes, times, weather }) => (
             <div className="home-hero-copy">
               <span className="home-hero-time">
-                <Icon name={PERIOD_ICON[period]} size={14} />
+                {/* No bright sun on the clock when it is grey or raining outside. */}
+                <Icon name={PERIOD_ICON[period] === 'Sun' && weather?.data?.now && weather.data.now.kind !== 'clear' ? weatherIcon(weather.data.now, period) : PERIOD_ICON[period]} size={14} />
                 {clockLabel(`${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`)}
                 <i aria-hidden="true">·</i>
                 {formatDayKey(todayKey(), { weekday: 'long', day: 'numeric', month: 'long' })}
               </span>
               <h2>{greetingAt(minutes)}{firstName ? `, ${firstName}` : ''}</h2>
               <p>{periodLine(period, minutes, times)}</p>
+              <WeatherBadge variant="card" period={period} />
             </div>
           )}
         </DayScene>

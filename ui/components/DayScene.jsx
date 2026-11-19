@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { istParts, todayKey as todayKeyOf } from '../utils/time.js';
+import { useWeather, weatherLook } from '../utils/weather.js';
 import '../styles/scene.css';
 
 /**
@@ -15,7 +16,12 @@ import '../styles/scene.css';
  * orange and grey. The drawing is sized to its box, so it fits a wide banner,
  * a slim page header and a phone alike.
  *
- * Preview another time with ?sceneAt=18:30 in the address bar.
+ * The weather outside changes it too (utils/weather.js): clouds gather and the
+ * sun dims, rain or snow falls, lightning flashes in a storm, fog lies on the
+ * hills, and a poor AQI shows as brown haze.
+ *
+ * Preview another time with ?sceneAt=18:30 and other weather with
+ * ?sceneWeather=rain (or storm, fog, cloudy…) and ?sceneAqi=320.
  */
 
 // ---------------------------------------------------------------- helpers
@@ -171,6 +177,49 @@ function toneFor(pal) {
   return onWhite > onNavy ? 'dark' : 'light';
 }
 
+// ---------------------------------------------------------------- weather on the colours
+const STORM_DAY = ['#46525D', '#5A6772', '#6F7C87', '#84909A'];
+const STORM_NIGHT = ['#0A1117', '#0F171E', '#151F28', '#1B2630'];
+const greyOf = (h) => { const [r, gr, b] = hex2rgb(h); const y = 0.299 * r + 0.587 * gr + 0.114 * b; return rgb2hex([y * 0.97, y * 0.99, y * 1.04]); };
+const nightness = (pal) => clamp(1 - luminance(pal.sky[1]) * 4.5, 0, 1);
+
+/** Greys and darkens the time-of-day colours for clouds, rain, fog and smog. */
+function weatherPalette(pal, L) {
+  if (!L) return pal;
+  const night = nightness(pal);
+  const smogDay = L.smog * (1 - night * 0.75);
+  const sky = pal.sky.map((c, i) => {
+    let out = mix(c, greyOf(c), clamp(L.cover * 0.8 + L.fog * 0.3, 0, 0.92));
+    out = mix(out, mix(STORM_DAY[i], STORM_NIGHT[i], night), L.gloom * 0.72);
+    if (smogDay > 0) out = mix(out, i >= 2 ? '#CBB896' : '#A8A291', smogDay * (i >= 2 ? 0.55 : 0.32));
+    return out;
+  });
+  const land = (c) => {
+    let out = mix(c, greyOf(c), L.cover * 0.35 + L.fog * 0.2);
+    out = mix(out, night > 0.5 ? '#0E161D' : '#2A3540', L.gloom * 0.3);
+    if (L.fog) out = mix(out, mix('#C9D1D8', '#2E3A45', night), L.fog * 0.28);
+    return out;
+  };
+  const cloudTone = mix(mix('#A7B1BA', '#5C6874', clamp((L.gloom - 0.2) / 0.55, 0, 1)), '#25313B', night);
+  const cloudy = L.cover > 0.25;
+  return {
+    ...pal,
+    sky,
+    glow: [mix(pal.glow[0], '#E6E9EC', L.cover * 0.6), pal.glow[1] * (1 - L.cover * 0.82) * (1 - L.smog * 0.35)],
+    far: land(pal.far),
+    mid: land(pal.mid),
+    plant: land(pal.plant),
+    near: land(pal.near),
+    haze: [mix(mix(pal.haze[0], mix('#D5DBE0', '#3A4652', night), Math.max(L.fog, L.cover * 0.5)), '#C9B48F', L.smog * 0.8), clamp(pal.haze[1] + L.fog * 0.4 + L.rain * 0.12 + L.smog * 0.35, 0, 0.95)],
+    cloud: [cloudy ? mix(pal.cloud[0], cloudTone, clamp(L.cover * 0.9, 0, 0.92)) : pal.cloud[0], cloudy ? Math.max(pal.cloud[1], 0.62 + 0.38 * L.cover) : pal.cloud[1]],
+    stars: pal.stars * (1 - L.cover) ** 2 * (1 - L.smog * 0.6),
+    birds: pal.birds * clamp(1 - Math.max(L.rain * 1.8, L.snow * 1.8, L.fog, L.cover > 0.85 ? 0.55 : 0), 0, 1),
+    flies: pal.flies * clamp(1 - Math.max(L.rain, L.snow, L.fog) * 2.2, 0, 1),
+    // Dark and rainy: the plant switches its lights on.
+    lights: clamp(Math.max(pal.lights, L.gloom * 0.8), 0, 1),
+  };
+}
+
 // ---------------------------------------------------------------- shapes
 function smoothPath(pts, bottom) {
   let d = `M${f1(pts[0][0])} ${f1(bottom)} L${f1(pts[0][0])} ${f1(pts[0][1])}`;
@@ -259,6 +308,15 @@ function buildGeometry(W, H, variant) {
     x: lerp(flyRange[0], flyRange[1], rand()), y: horizon + rand() * (H - horizon - 6), d: rand() * 5, dur: 2.2 + rand() * 2.6, path: 'abc'[Math.floor(rand() * 3)], mdur: 7 + rand() * 7,
   }));
 
+  // A thick cloud deck for grey days (drawn only when it is cloudy).
+  const deck = Array.from({ length: clamp(Math.round(W / 140), 6, 16) }, () => ({
+    y: H * (0.03 + rand() * (band ? 0.4 : 0.3)), s: (0.85 + rand() * 0.8) * k, dur: 110 + rand() * 120, d: -(rand() * 240),
+  }));
+  const bx = band ? W * 0.84 : narrow ? W * 0.82 : W * 0.8;
+  const by0 = H * 0.03;
+  const seg = (horizon - 26 * k - by0) / 4;
+  const bolt = `M${f1(bx)} ${f1(by0)} L${f1(bx - 9 * k)} ${f1(by0 + seg * 1.1)} L${f1(bx + 5 * k)} ${f1(by0 + seg * 1.35)} L${f1(bx - 7 * k)} ${f1(by0 + seg * 2.6)} L${f1(bx + 3 * k)} ${f1(by0 + seg * 2.85)} L${f1(bx - 4 * k)} ${f1(by0 + seg * 4)}`;
+
   const arc = band
     ? { x0: W * 0.5, x1: W * 0.97, top: H * 0.26, base: horizon }
     : narrow ? { x0: W * 0.5, x1: W * 0.95, top: H * 0.56, base: horizon } : { x0: W * 0.38, x1: W * 0.96, top: H * 0.16, base: horizon };
@@ -267,16 +325,16 @@ function buildGeometry(W, H, variant) {
     W, H, k, kw, horizon, arc, plantX, plantBase, plantW, band,
     skyStops: band ? [0.5, 0.9] : [0.45, 0.8],
     farPath: smoothPath(far, H), midPath: smoothPath(mid, H), nearPath: smoothPath(near, H),
-    trees, stars, clouds, flocks, flies,
+    trees, stars, clouds, flocks, flies, deck, bolt,
     sunR: Math.max(band ? 9 : 12, 20 * k), moonR: Math.max(band ? 7 : 10, 15 * k),
   };
 }
 
 // ---------------------------------------------------------------- pieces
-function Cloud({ c, W, fill, opacity }) {
+function Cloud({ c, W, fill, opacity, speed = 1 }) {
   const w = 140 * c.s;
   return (
-    <g className="scene-cloud" style={{ '--dur': `${c.dur}s`, '--d': `${c.d}s`, '--travel': `${f1(W + w * 2 + 40)}px` }}>
+    <g className="scene-cloud" style={{ '--dur': `${f1(c.dur / speed)}s`, '--d': `${f1(c.d / speed)}s`, '--travel': `${f1(W + w * 2 + 40)}px` }}>
       <g transform={`translate(${f1(-w - 20)} ${f1(c.y)}) scale(${c.s})`} fill={fill} opacity={opacity}>
         <ellipse cx="70" cy="0" rx="62" ry="14" />
         <ellipse cx="44" cy="-8" rx="28" ry="16" />
@@ -353,7 +411,7 @@ function Tree({ t, fill }) {
   );
 }
 
-function SceneArt({ g, pal, m, times, uid }) {
+function SceneArt({ g, pal, m, times, uid, look: L }) {
   const { W, H, arc } = g;
   // Sun: rises on the left at sunrise, highest at noon, sets on the right at sunset.
   const s = (m - times.rise) / (times.set - times.rise);
@@ -363,9 +421,17 @@ function SceneArt({ g, pal, m, times, uid }) {
   const sunX = lerp(arc.x0, arc.x1, clamp(s, -0.04, 1.04));
   const sunY = arc.base - alt * (arc.base - arc.top) + below * H * 3 + (1 - alt) * g.sunR * 0.4;
   const sunR = g.sunR * (1.12 - 0.12 * alt);
-  const sunEdge = mix('#F38121', '#FDE7D4', smooth(0.08, 0.8, alt));
-  const sunCore = mix('#F8B57D', '#FFFFFF', smooth(0.05, 0.6, alt));
-  const rays = smooth(0.6, 0.92, alt);
+  // Weather: clouds, fog and smog dim and soften the sun; smog turns it a dull orange.
+  const dim = L ? clamp(L.cover * 0.82 + L.fog * 0.25 + L.smog * 0.35, 0, 0.94) : 0;
+  const smog = L ? L.smog : 0;
+  const sunEdge = mix(mix('#F38121', '#FDE7D4', smooth(0.08, 0.8, alt)), '#D9692B', smog * 0.6);
+  const sunCore = mix(mix('#F8B57D', '#FFFFFF', smooth(0.05, 0.6, alt)), '#F6B27A', smog * 0.7);
+  const rays = smooth(0.6, 0.92, alt) * (1 - smooth(0.08, 0.3, dim));
+  const sunBlur = L ? g.sunR * 0.32 * smooth(0.45, 1, L.cover) : 0;
+  const speed = L ? 0.75 + Math.min(L.wind, 45) / 16 : 1;
+  const deckShow = L ? smooth(0.4, 0.95, L.cover) : 0;
+  const ceilShow = L ? smooth(0.6, 1, L.cover) : 0;
+  const deckFill = mix(pal.cloud[0], '#000000', 0.07);
 
   // Moon: rides from late afternoon to early morning and shows as the sky darkens.
   const moonRise = times.set - 140;
@@ -375,7 +441,7 @@ function SceneArt({ g, pal, m, times, uid }) {
   const moonX = lerp(arc.x0 + (arc.x1 - arc.x0) * 0.06, arc.x1, u);
   const moonY = arc.base - malt * (arc.base - arc.top) * 0.96;
   const morningSun = s > -0.1 && s < 0.5 ? smooth(-0.1, -0.02, s) : 0;
-  const moonShow = moonUp ? clamp(1 - luminance(pal.sky[1]) * 2.3, 0, 1) * smooth(0, 0.05, u) * (1 - smooth(0.95, 1, u)) * (1 - morningSun) : 0;
+  const moonShow = (moonUp ? clamp(1 - luminance(pal.sky[1]) * 2.3, 0, 1) * smooth(0, 0.05, u) * (1 - smooth(0.95, 1, u)) * (1 - morningSun) : 0) * (1 - dim);
 
   const glowR = sunR * 6.5 * (1 + (1 - alt) * 0.6);
 
@@ -431,6 +497,14 @@ function SceneArt({ g, pal, m, times, uid }) {
           <stop offset="0.3" stopColor="#FBD3B0" stopOpacity="0.9" />
           <stop offset="1" stopColor="#F38121" stopOpacity="0" />
         </radialGradient>
+        {sunBlur > 0.3 && <filter id={`${uid}sunblur`} x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation={f1(sunBlur)} /></filter>}
+        {ceilShow > 0.01 && (
+          <linearGradient id={`${uid}ceil`} x1="0" y1="0" x2="0" y2={g.horizon} gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor={deckFill} stopOpacity={f1(ceilShow * 92) / 100} />
+            <stop offset="0.55" stopColor={deckFill} stopOpacity={f1(ceilShow * 38) / 100} />
+            <stop offset="1" stopColor={deckFill} stopOpacity="0" />
+          </linearGradient>
+        )}
         <mask id={`${uid}moon`}>
           <rect x="0" y="0" width={W} height={H} fill="black" />
           <circle cx={f1(moonX)} cy={f1(moonY)} r={g.moonR} fill="white" />
@@ -459,8 +533,8 @@ function SceneArt({ g, pal, m, times, uid }) {
         </g>
       )}
 
-      {sunUp && (
-        <g className="scene-sun">
+      {sunUp && dim < 0.99 && (
+        <g className="scene-sun" opacity={f1((1 - dim) * 100) / 100} filter={sunBlur > 0.3 ? `url(#${uid}sunblur)` : undefined}>
           {rays > 0.02 && (
             <g className="scene-rays" opacity={f1(rays * 45) / 100} style={{ transformOrigin: `${f1(sunX)}px ${f1(sunY)}px` }}>
               {Array.from({ length: 12 }, (_, i) => {
@@ -477,7 +551,10 @@ function SceneArt({ g, pal, m, times, uid }) {
         </g>
       )}
 
-      {g.clouds.map((c, i) => <Cloud key={i} c={c} W={W} fill={pal.cloud[0]} opacity={f1(pal.cloud[1] * 100) / 100} />)}
+      {ceilShow > 0.01 && <rect width={W} height={f1(g.horizon)} fill={`url(#${uid}ceil)`} />}
+      {deckShow > 0.01 && g.deck.map((c, i) => <Cloud key={`d${i}`} c={c} W={W} fill={deckFill} opacity={f1(deckShow * pal.cloud[1] * 95) / 100} speed={speed} />)}
+      {g.clouds.map((c, i) => <Cloud key={i} c={c} W={W} fill={pal.cloud[0]} opacity={f1(pal.cloud[1] * 100) / 100} speed={speed} />)}
+      {L?.storm && <path className="scene-bolt" d={g.bolt} fill="none" stroke="#F4F7FB" strokeWidth={Math.max(1.2, 2.2 * g.k)} strokeLinejoin="round" strokeLinecap="round" />}
       {pal.birds > 0.05 && g.flocks.map((f, i) => <Flock key={i} f={f} W={W} color={birdColor} opacity={f1(pal.birds * 90) / 100} />)}
 
       <path d={g.farPath} fill={pal.far} />
@@ -489,7 +566,7 @@ function SceneArt({ g, pal, m, times, uid }) {
       <g className="scene-smoke-wrap" fill={smoke} filter={`url(#${uid}blur)`}>
         {[0, 1, 2, 3, 4].map((i) => (
           <circle key={i} className="scene-smoke" cx={f1(g.plantX + 156 * g.kw)} cy={f1(g.plantBase - 122 * g.kw)} r={f1(Math.max(3, 6.5 * g.kw))}
-            style={{ '--d': `${f1(-i * 2.2)}s`, '--sx': `${f1(22 * g.kw + 8)}px`, '--sy': `${f1(-40 * g.kw - 8)}px` }} />
+            style={{ '--d': `${f1(-i * 2.2)}s`, '--sx': `${f1((22 * g.kw + 8) * (L ? 0.6 + Math.min(L.wind, 40) / 14 : 1))}px`, '--sy': `${f1((-40 * g.kw - 8) * (L ? 1 - Math.min(0.5, L.wind / 60) : 1))}px` }} />
         ))}
       </g>
 
@@ -511,12 +588,38 @@ function SceneArt({ g, pal, m, times, uid }) {
   );
 }
 
+/** Rain, snow, fog, smog and lightning: soft CSS layers over the drawing. */
+function WeatherLayers({ L, h, night }) {
+  const dir = Number.isFinite(L.windDir) && L.windDir < 180 ? -1 : 1;
+  const slant = clamp(5 + L.wind * 0.5, 5, 24);
+  const extra = Math.ceil(h * Math.tan((slant * Math.PI) / 180)) + 24;
+  const a = (v) => f1(clamp(v, 0, 1) * 100) / 100;
+  return (
+    <div className="scene-wx" aria-hidden="true">
+      {L.smog > 0.02 && <div className="scene-smog" style={{ '--a': a(L.smog), '--c': night > 0.5 ? '72,64,52' : '199,178,140' }} />}
+      {L.fog > 0.05 && <div className="scene-fog" style={{ '--a': a(L.fog), '--c': night > 0.5 ? '62,74,86' : '226,231,235' }}><i /><i /></div>}
+      {L.rain > 0.02 && (
+        <div className={`scene-rain${L.rain >= 0.75 ? ' heavy' : L.rain < 0.4 ? ' light' : ''}`} style={{ '--a': a(0.38 + L.rain * 0.55) }}>
+          <div className="scene-tilt" style={{ left: -extra, right: -extra, transform: `skewX(${f1(dir * slant)}deg)` }}><i className="far" /><i className="near" /></div>
+        </div>
+      )}
+      {L.snow > 0.02 && (
+        <div className="scene-snow" style={{ '--a': a(0.55 + L.snow * 0.45) }}>
+          <div className="scene-tilt" style={{ left: -extra, right: -extra, transform: `skewX(${f1(dir * slant * 0.5)}deg)` }}><i className="far" /><i className="near" /></div>
+        </div>
+      )}
+      {L.storm && <div className="scene-flash" />}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- component
 /**
  * <DayScene variant="hero">…</DayScene> draws the scene behind its children.
- * Children may be a function that receives { period, tone, minutes }.
+ * Children may be a function that receives { period, tone, minutes, times, weather }.
+ * weather="auto" (signed in: near you), "public" (sign-in pages) or "off".
  */
-export default function DayScene({ variant = 'hero', className = '', children }) {
+export default function DayScene({ variant = 'hero', className = '', weather = 'auto', children }) {
   const ref = useRef(null);
   const [size, setSize] = useState(null);
   const uid = `sc${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -540,15 +643,20 @@ export default function DayScene({ variant = 'hero', className = '', children })
   const minutes = sceneMinutes(now);
   const day = todayKeyOf(now);
   const times = useMemo(() => sunTimes(new Date(`${day}T12:00:00+05:30`)), [day]);
-  const pal = useMemo(() => paletteAt(minutes, times), [minutes, times]);
+  const wx = useWeather({ mode: weather });
+  const look = useMemo(() => weatherLook(wx.data), [wx.data]);
+  const basePal = useMemo(() => paletteAt(minutes, times), [minutes, times]);
+  const pal = useMemo(() => weatherPalette(basePal, look), [basePal, look]);
   const geo = useMemo(() => (size ? buildGeometry(size.w, size.h, variant) : null), [size, variant]);
   const period = periodFor(minutes, times);
   const tone = toneFor(pal);
-  const content = typeof children === 'function' ? children({ period, tone, minutes, times }) : children;
+  const content = typeof children === 'function' ? children({ period, tone, minutes, times, weather: wx }) : children;
+  const wxClass = look ? ` wx-${look.kind}${look.smog > 0.3 ? ' wx-smog' : ''}` : '';
 
   return (
-    <div ref={ref} className={`day-scene day-scene-${variant} scene-${period} tone-${tone} ${className}`.trim()} data-period={period}>
-      {geo && <SceneArt g={geo} pal={pal} m={minutes} times={times} uid={uid} />}
+    <div ref={ref} className={`day-scene day-scene-${variant} scene-${period} tone-${tone}${wxClass} ${className}`.trim()} data-period={period} data-weather={look?.kind || undefined}>
+      {geo && <SceneArt g={geo} pal={pal} m={minutes} times={times} uid={uid} look={look} />}
+      {geo && look && <WeatherLayers L={look} h={geo.H} night={nightness(basePal)} />}
       {content && <div className="day-scene-content">{content}</div>}
     </div>
   );

@@ -5,6 +5,7 @@ import AppLauncher from './AppLauncher.jsx';
 import CommandPalette from './CommandPalette.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
 import DayScene from './DayScene.jsx';
+import WeatherBadge from './WeatherBadge.jsx';
 import { useAuth } from '../state/AuthContext.jsx';
 import { canAccessPath, canCustomizeDashboard } from '../utils/permissions.js';
 import { NAV_ITEMS, canOpenNavItem, navLabel } from '../utils/nav.js';
@@ -171,6 +172,7 @@ export default function Layout({ children }) {
               {current?.group && <><Icon name="ChevronRight" size={13} /><span>{current.group}</span></>}
             </nav>
             <h1>{title}</h1>
+            <WeatherBadge variant="chip" />
           </div>
         </DayScene>
       )}

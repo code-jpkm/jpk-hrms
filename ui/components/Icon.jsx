@@ -22,6 +22,8 @@ import {
   Scale, Calculator, UserRound, ClipboardPaste,
   Menu, CornerDownLeft, CalendarCheck2, CircleHelp, ArrowLeft, MoreHorizontal, PanelLeft,
   Wifi, WifiOff, Cloud, Monitor, Router, Check,
+  CloudRain, CloudDrizzle, CloudLightning, CloudSun, CloudMoon, CloudFog, CloudSnow, CloudSunRain, CloudMoonRain,
+  Snowflake, Wind, Droplets, Thermometer, Umbrella, LocateFixed, Haze, Leaf,
 } from 'lucide-react';
 
 const MAP = {
@@ -46,6 +48,8 @@ const MAP = {
   ClipboardList, MessageCircleHeart, Trophy, Hand, Flame, Banknote, Receipt, FileCheck2,
   Scale, Calculator, UserRound, ClipboardPaste, Menu, CornerDownLeft, CalendarCheck2, CircleHelp, ArrowLeft, MoreHorizontal, PanelLeft,
   Wifi, WifiOff, Cloud, Monitor, Router, Check,
+  CloudRain, CloudDrizzle, CloudLightning, CloudSun, CloudMoon, CloudFog, CloudSnow, CloudSunRain, CloudMoonRain,
+  Snowflake, Wind, Droplets, Thermometer, Umbrella, LocateFixed, Haze, Leaf,
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 2, className, style }) {

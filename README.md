@@ -107,6 +107,24 @@ DNS 8.8.8.8 (Menu → COMM → Ethernet).
 captcha, phone check-in, attendance, leave, payslips, approvals). It points at
 https://jpk-hrms.onrender.com. Build the APK with Expo EAS: see `android-app/README.md`.
 
+## Live weather on the scenery
+
+The landscape on the home page, the page headers and the sign-in pages follows
+the real weather: clouds gather and the sun dims, rain or snow falls, lightning
+flashes in a storm, fog lies on the hills and a poor AQI shows as brown haze.
+The home greeting shows the temperature in °C, the AQI on India's CPCB scale
+and a short tip; click it for humidity, wind, rain chance and PM2.5 / PM10.
+
+- Data: Open-Meteo (weather) and Copernicus CAMS (air), no key needed. The free
+  plan is for non-commercial use; with a paid plan set `OPEN_METEO_API_KEY`.
+- Where: the browser's location, asked once and rounded to about 5 km, else the
+  employee's office or factory site (Company settings → sites), else Kolkata.
+  Sign-in pages show the main office.
+- The server caches each 5 km square (10 min weather, 30 min air).
+- Preview: add `?sceneWeather=rain` (clear, partly, cloudy, fog, drizzle, rain,
+  heavy, storm, snow) and `?sceneAqi=320` to any address; `?sceneAt=20:30` sets the time.
+- Check after a deploy: `https://jpk-hrms.onrender.com/api/weather/office`.
+
 ## Tests run for v27 (local test database)
 
 - Sign-in: 58 checks (captcha, lockout, temporary passwords, reset links, Google

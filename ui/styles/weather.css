@@ -1,0 +1,104 @@
+/* Live weather on the scenery (components/WeatherBadge.jsx).
+   Glass like the time chip on the home greeting; text colour follows the sky. */
+.wx{position:relative;display:inline-flex;flex-direction:column;align-items:flex-start;gap:7px;max-width:100%}
+.wx-main{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:10px;max-width:100%;cursor:pointer;border-radius:999px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:transform .15s ease,box-shadow .15s ease,background-color .3s ease}
+.wx-main:hover{transform:translateY(-1px)}
+.wx-main:focus-visible{outline:2px solid var(--jpk-orange);outline-offset:2px}
+.tone-light .wx-main{background:rgba(255,255,255,.66);color:var(--jpk-navy);border:1px solid rgba(255,255,255,.85);box-shadow:0 1px 3px rgba(20,35,48,.1)}
+.tone-dark .wx-main{background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.24)}
+.wx.on-scene .wx-main{background:rgba(14,26,36,.46);color:#fff;border:1px solid rgba(255,255,255,.22)}
+.wx-icon{display:grid;place-items:center;flex:0 0 auto}
+.wx-temp{font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
+.wx-temp small{font-size:.55em;font-weight:600;margin-left:1px;vertical-align:top;opacity:.75}
+
+/* AQI: coloured dot (India AQI colours), number and band name */
+.wx-aqi{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;white-space:nowrap;border-left:1px solid rgba(127,140,152,.38)}
+.wx-aqi i{width:9px;height:9px;border-radius:50%;background:var(--aqi);box-shadow:0 0 0 3px color-mix(in srgb,var(--aqi) 30%,transparent)}
+.wx-aqi-label{font-size:10.5px;font-weight:700;letter-spacing:.06em;opacity:.72}
+.wx-aqi b{font-weight:700}
+.wx-aqi small{font-size:12px;font-weight:600;opacity:.88}
+
+/* card: the home greeting */
+.wx-card .wx-main{border-radius:16px;padding:8px 14px 8px 8px;gap:11px}
+.wx-card .wx-icon{width:40px;height:40px;border-radius:12px}
+.tone-light .wx-card .wx-icon{background:rgba(31,52,69,.08)}
+.tone-dark .wx-card .wx-icon{background:rgba(255,255,255,.14)}
+.wx-card .wx-temp{font-size:27px;line-height:1}
+.wx-sky{display:grid;gap:2px;min-width:0}
+.wx-sky b{font-size:13.5px;font-weight:650;white-space:nowrap}
+.wx-sky small{font-size:11.5px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.wx-card .wx-aqi{padding-left:12px;margin-left:2px;height:30px}
+.wx-card .wx-aqi b{font-size:15px}
+.wx-tip{margin:0;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;line-height:1.4;padding:0 4px}
+.wx-tip svg{flex:0 0 auto;opacity:.9}
+.tone-light .wx-tip{color:var(--jpk-gray-800)}
+.tone-dark .wx-tip{color:rgba(255,255,255,.9);text-shadow:0 1px 2px rgba(0,0,0,.28)}
+
+/* chip: page headers and sign-in pages */
+.wx-chip .wx-main{height:30px;padding:0 11px 0 9px;gap:7px;font-size:13px}
+.wx-chip .wx-temp{font-size:13.5px}
+.wx-chip .wx-temp small{font-size:.8em;vertical-align:baseline}
+.wx-chip .wx-aqi{padding-left:7px}
+.wx-chip .wx-aqi b{font-size:12.5px}
+
+/* a little life in the icon */
+.wx-anim-clear .lucide-sun{animation:wx-spin 30s linear infinite}
+.wx-anim-partly svg,.wx-anim-cloudy svg,.wx-anim-fog svg{animation:wx-drift 5s ease-in-out infinite alternate}
+.wx-anim-rain svg,.wx-anim-drizzle svg,.wx-anim-snow svg{animation:wx-bob 2.2s ease-in-out infinite}
+.wx-anim-storm svg{animation:wx-shake 3.6s ease-in-out infinite}
+@keyframes wx-spin{to{transform:rotate(360deg)}}
+@keyframes wx-drift{from{transform:translateX(-1.5px)}to{transform:translateX(1.5px)}}
+@keyframes wx-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(1.5px)}}
+@keyframes wx-shake{0%,90%,100%{transform:rotate(0)}92%{transform:rotate(-6deg)}94%{transform:rotate(5deg)}96%{transform:rotate(-3deg)}}
+
+/* where it sits */
+.home-hero-copy .wx-card{margin-top:14px}
+.jpk-pagehead-inner{position:relative}
+.jpk-pagehead .wx-chip{position:absolute;right:24px;top:50%;transform:translateY(-50%)}
+.jpk-auth-weather{position:absolute;top:16px;right:16px;z-index:3}
+@media (max-width:640px){
+  .jpk-pagehead .wx-chip{right:14px;top:10px;transform:none}
+  .jpk-pagehead .wx-chip .wx-main{height:26px;font-size:12px;padding:0 9px 0 7px}
+  .wx-card .wx-main{padding:7px 11px 7px 7px;gap:9px}
+  .wx-card .wx-icon{width:34px;height:34px}
+  .wx-card .wx-temp{font-size:23px}
+  .wx-sky small{max-width:120px}
+  .wx-card .wx-aqi small{display:none}
+  .jpk-auth-weather{top:12px;right:12px}
+}
+@media (max-width:380px){.wx-card .wx-sky{display:none}}
+
+/* details panel */
+.wx-details{position:fixed;z-index:1300;box-sizing:border-box;background:#fff;color:var(--jpk-ink);border:1px solid var(--jpk-line);border-radius:14px;box-shadow:0 14px 34px rgba(20,35,48,.18),0 2px 6px rgba(20,35,48,.08);padding:14px 16px;display:grid;gap:12px;font-size:13px;max-height:calc(100vh - 24px);overflow:auto;animation:wx-pop .16s ease-out}
+@keyframes wx-pop{from{opacity:0;transform:translateY(-4px)}}
+.wx-d-head{display:flex;gap:12px;align-items:center}
+.wx-d-icon{width:48px;height:48px;border-radius:13px;display:grid;place-items:center;background:var(--jpk-gray-100);color:var(--jpk-navy);flex:0 0 auto}
+.wx-d-head b{display:block;font-size:22px;font-weight:700;line-height:1.15;letter-spacing:-.01em}
+.wx-d-head b small{font-size:14px;font-weight:600;color:var(--jpk-text);margin-left:4px;letter-spacing:0}
+.wx-d-head span{font-size:12.5px;color:var(--jpk-muted)}
+.wx-d-facts{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.wx-d-facts li{display:flex;align-items:center;gap:7px;color:var(--jpk-text);flex-wrap:wrap}
+.wx-d-facts li svg{color:var(--jpk-muted);flex:0 0 auto}
+.wx-d-facts b{color:var(--jpk-ink);font-weight:650}
+.wx-d-air{border-top:1px solid var(--jpk-line);padding-top:12px;display:grid;gap:8px}
+.wx-d-air-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.wx-d-air-top span{font-weight:650;color:var(--jpk-ink)}
+.wx-d-air-top span small{font-weight:500;color:var(--jpk-muted);margin-left:4px;font-size:11.5px}
+.wx-d-air-top b{font-size:20px;font-weight:750;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wx-d-air-top em{font-style:normal;font-size:13px;font-weight:650}
+.wx-d-bar{position:relative;height:8px;border-radius:999px;margin:2px 6px}
+.wx-d-bar i{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid var(--jpk-ink);transform:translate(-50%,-50%);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.wx-d-air p{margin:0;color:var(--jpk-text);line-height:1.45}
+.wx-d-pm{color:var(--jpk-muted);font-size:11.5px}
+.wx-d-tip{margin:0;display:flex;gap:7px;align-items:flex-start;padding:9px 11px;border-radius:10px;background:var(--jpk-orange-50);color:var(--jpk-orange-text);line-height:1.45}
+.wx-d-tip svg{flex:0 0 auto;margin-top:2px}
+.wx-d-foot{border-top:1px solid var(--jpk-line);padding-top:10px;display:grid;gap:7px;color:var(--jpk-muted);font-size:11.5px}
+.wx-d-foot span{display:inline-flex;align-items:center;gap:5px}
+.wx-d-foot button{justify-self:start;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--jpk-line-strong);background:#fff;color:var(--jpk-navy);font:inherit;font-weight:600;font-size:12.5px;cursor:pointer}
+.wx-d-foot button:hover:not(:disabled){background:var(--jpk-gray-100)}
+.wx-d-foot a{color:inherit;text-decoration:underline}
+
+@media (prefers-reduced-motion:reduce){
+  .wx svg,.wx-details svg,.wx-details{animation:none!important}
+  .wx-main{transition:none}
+}
