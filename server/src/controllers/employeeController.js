@@ -465,22 +465,35 @@ exports.resendLogin = asyncHandler(async (req, res) => {
   });
 });
 
-/** One click after switching from Google: everyone without a password gets login details. */
+/** One click: everyone who cannot sign in yet gets login details. */
 exports.sendLoginDetailsToAll = asyncHandler(async (req, res) => {
-  const outcome = await loginAccess.giveLoginDetailsToAll({ tenantId: req.tenantId, actor: req.user });
-  const notDelivered = outcome.total - outcome.delivered;
+  const body = req.body || {};
+  const outcome = await loginAccess.giveLoginDetailsToAll({
+    tenantId: req.tenantId, actor: req.user, includeWaiting: Boolean(body.includeWaiting), includeReady: Boolean(body.includeReady)
+  });
+  const handOver = outcome.results.filter((r) => r.temporaryPassword).length;
+  const parts = [`${outcome.delivered} sent by email / WhatsApp`];
+  if (handOver) parts.push(`${handOver} need you to hand over the temporary password`);
+  if (outcome.failed) parts.push(`${outcome.failed} could not be done (see below)`);
   res.json({
     ...outcome,
     message: outcome.total
-      ? `Login details made for ${outcome.total} people. ${outcome.delivered} sent by email / WhatsApp${notDelivered ? `, ${notDelivered} need you to hand over the temporary password` : ''}.`
-      : 'Everyone with a login already has a password.'
+      ? `Login details made for ${outcome.total} ${outcome.total === 1 ? 'person' : 'people'}: ${parts.join(', ')}.`
+      : 'Nobody to send to: everyone with an email can already sign in.'
   });
 });
 
-/** How many logins still have no password (shown on the People page). */
+/** Who "Send login details to everyone" would reach (shown before sending). */
+exports.loginDetailsPlan = asyncHandler(async (req, res) => {
+  const plan = await loginAccess.loginDetailsPlan({ tenantId: req.tenantId, actor: req.user });
+  res.json({ ...plan, counts: loginAccess.planCounts(plan) });
+});
+
+/** Counts for the People page button. */
 exports.loginStatusSummary = asyncHandler(async (req, res) => {
-  const users = await loginAccess.loginsWithoutPassword(req.tenantId);
-  res.json({ withoutPassword: users.length });
+  const plan = await loginAccess.loginDetailsPlan({ tenantId: req.tenantId, actor: req.user });
+  const counts = loginAccess.planCounts(plan);
+  res.json({ withoutPassword: counts.toSend, ...counts });
 });
 
 exports.offboardEmployee = asyncHandler(async (req, res) => {

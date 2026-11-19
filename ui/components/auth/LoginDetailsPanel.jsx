@@ -56,7 +56,7 @@ export default function LoginDetailsPanel({ result, onClose }) {
       <section className="login-details">
         <header>
           <Icon name="KeyRound" size={20} />
-          <h2 id="login-details-title">{bulk ? 'Login details for everyone without a password' : 'Login details'}</h2>
+          <h2 id="login-details-title">{bulk ? 'Login details sent' : 'Login details'}</h2>
           <button type="button" className="icon-btn jpk-auth-iconbtn" onClick={onClose} aria-label="Close"><Icon name="X" size={18} /></button>
         </header>
         <p className={result.loginDelivered === false || handOver.length ? 'warn' : ''}>{result.message}</p>
@@ -112,6 +112,9 @@ export default function LoginDetailsPanel({ result, onClose }) {
               </div>
             )}
           </>
+        )}
+        {bulk && result.skipped?.noEmail?.length > 0 && (
+          <p className="login-details-skipped">Not included, no email in their profile: {result.skipped.noEmail.map((r) => r.name).join(', ')}. Add an email, then use 🔑 Send login details on their profile.</p>
         )}
         <footer><button type="button" className="primary" onClick={onClose}>Done</button></footer>
       </section>

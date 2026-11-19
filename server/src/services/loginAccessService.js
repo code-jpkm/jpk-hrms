@@ -142,32 +142,126 @@ async function loginsWithoutPassword(tenantId) {
   }).select('_id email name phone role');
 }
 
-/** "Send login details to everyone who has no password yet". */
-async function giveLoginDetailsToAll({ tenantId, actor }) {
-  const users = await loginsWithoutPassword(tenantId);
+const ADMIN_ROLES = ['SUPER_ADMIN', 'HR_ADMIN'];
+const fullName = (e) => `${e?.firstName || ''} ${e?.lastName || ''}`.trim();
+
+/**
+ * Who "Send login details to everyone" reaches, by group:
+ *  - create:  active employees with an email but no login yet (a login is made)
+ *  - send:    logins that never had a password in this HRMS (old Google logins)
+ *  - waiting: got a temporary password already but have not used it yet
+ *  - ready:   already have a password of their own (changed only when asked)
+ *  - noEmail: no email in the profile, so no login can be made
+ *  - disabled: the login is turned off
+ * The person pressing the button is never included, and other admin logins only
+ * when a Super Admin presses it.
+ */
+async function loginDetailsPlan({ tenantId, actor }) {
+  const employees = await Employee.find({ tenantId, status: { $ne: 'OFFBOARDED' } })
+    .select('_id firstName lastName employeeCode email phone userId')
+    .populate('userId', 'email role status passwordChangedAt forcePasswordChange tempPasswordSentAt lastLoginAt')
+    .sort({ employeeCode: 1 })
+    .lean();
+  const plan = { create: [], send: [], waiting: [], ready: [], noEmail: [], disabled: [], admins: [] };
+  const linked = new Set();
+  const actorId = String(actor?._id || '');
+  for (const e of employees) {
+    const user = e.userId && typeof e.userId === 'object' ? e.userId : null;
+    const row = { employeeId: String(e._id), name: fullName(e), employeeCode: e.employeeCode || '', email: user?.email || e.email || '' };
+    if (user) linked.add(String(user._id));
+    if (user && String(user._id) === actorId) continue;
+    if (!user) {
+      (e.email ? plan.create : plan.noEmail).push(row);
+    } else if (user.status !== 'ACTIVE') {
+      plan.disabled.push(row);
+    } else if (ADMIN_ROLES.includes(user.role) && actor?.role !== 'SUPER_ADMIN') {
+      plan.admins.push(row);
+    } else if (!user.passwordChangedAt) {
+      plan.send.push({ ...row, userId: String(user._id) });
+    } else if (user.forcePasswordChange) {
+      plan.waiting.push({ ...row, userId: String(user._id), sentAt: user.tempPasswordSentAt || null });
+    } else {
+      plan.ready.push({ ...row, userId: String(user._id), lastLoginAt: user.lastLoginAt || null });
+    }
+  }
+  // Admin logins without an employee profile (only a Super Admin sends to these).
+  if (actor?.role === 'SUPER_ADMIN') {
+    const loose = await User.find({
+      tenantId,
+      status: 'ACTIVE',
+      role: { $in: ADMIN_ROLES },
+      _id: { $nin: [...linked, actorId].filter(Boolean) },
+      $or: [{ passwordChangedAt: { $exists: false } }, { passwordChangedAt: null }]
+    }).select('_id email name').lean();
+    for (const u of loose) plan.send.push({ employeeId: '', userId: String(u._id), name: u.name || u.email, employeeCode: '', email: u.email });
+  }
+  return plan;
+}
+
+function planCounts(plan) {
+  return {
+    create: plan.create.length,
+    send: plan.send.length,
+    waiting: plan.waiting.length,
+    noEmail: plan.noEmail.length,
+    disabled: plan.disabled.length,
+    admins: plan.admins.length,
+    ready: plan.ready.length,
+    // What the button sends to without extra choices.
+    toSend: plan.create.length + plan.send.length
+  };
+}
+
+/**
+ * "Send login details to everyone who cannot sign in yet": makes logins for
+ * employees who have none, gives each a temporary password and sends it by
+ * email / WhatsApp. `includeWaiting` also sends a fresh one to people who got
+ * login details before but never used them; `includeReady` also replaces the
+ * password of people who already have one (for example from an old system).
+ */
+async function giveLoginDetailsToAll({ tenantId, actor, includeWaiting = false, includeReady = false }) {
+  const guard = require('./accountGuardService');
+  const plan = await loginDetailsPlan({ tenantId, actor });
+  const targets = [...plan.create, ...plan.send, ...(includeWaiting ? plan.waiting : []), ...(includeReady ? plan.ready : [])];
   const results = [];
-  for (const user of users) {
-    if (['SUPER_ADMIN', 'HR_ADMIN'].includes(user.role) && actor?.role !== 'SUPER_ADMIN') continue;
-    const employee = await Employee.findOne({ tenantId, userId: user._id, status: { $ne: 'OFFBOARDED' } }).select('_id firstName lastName employeeCode phone');
-    if (!employee && user.role !== 'SUPER_ADMIN' && user.role !== 'HR_ADMIN') continue;
+  for (const target of targets) {
     try {
+      let employee = null;
+      let user = null;
+      if (target.employeeId) {
+        employee = await Employee.findOne({ _id: target.employeeId, tenantId });
+        if (!employee) continue;
+        user = await guard.resolveLoginForEmployee({
+          actor, tenantId, employee, email: target.userId ? target.email : employee.email, phone: employee.phone, name: fullName(employee)
+        });
+        if (!user) throw new ApiError(400, 'Add the employee\'s email first: it is their login name');
+        // Link without re-validating the whole (possibly old) employee record.
+        if (String(employee.userId || '') !== String(user._id)) await Employee.updateOne({ _id: employee._id, tenantId }, { $set: { userId: user._id } });
+      } else {
+        user = await User.findOne({ _id: target.userId, tenantId });
+        if (!user) continue;
+      }
+      guard.assertCanManageAccount(actor, user);
       const outcome = await giveLoginDetails({ tenantId, employee, user });
       results.push({
-        name: employee ? `${employee.firstName} ${employee.lastName || ''}`.trim() : user.name,
-        employeeCode: employee?.employeeCode || '',
+        name: target.name,
+        employeeCode: target.employeeCode,
         email: user.email,
         delivered: outcome.delivered,
+        createdLogin: !target.userId && Boolean(target.employeeId),
         // Only returned when no message went out, so HR can hand it over.
         temporaryPassword: outcome.delivered ? undefined : outcome.temporaryPassword
       });
     } catch (error) {
-      results.push({ name: user.name, email: user.email, delivered: false, error: error.message });
+      results.push({ name: target.name, employeeCode: target.employeeCode, email: target.email, delivered: false, error: error.message });
     }
   }
   return {
     total: results.length,
     delivered: results.filter((r) => r.delivered).length,
-    results
+    failed: results.filter((r) => r.error).length,
+    results,
+    skipped: { noEmail: plan.noEmail, disabled: plan.disabled }
   };
 }
 
@@ -179,6 +273,8 @@ module.exports = {
   sendLoginDetails,
   giveLoginDetails,
   giveLoginDetailsToAll,
+  loginDetailsPlan,
+  planCounts,
   loginsWithoutPassword,
   applyAdminPasswordFromEnv,
   summariseLogs,

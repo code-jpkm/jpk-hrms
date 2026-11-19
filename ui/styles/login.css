@@ -95,3 +95,18 @@
 .login-status.ok{background:#E8F3EC;color:#2E7D4F}
 .login-status.warn{background:var(--jpk-orange-50);color:var(--jpk-orange-700)}
 .login-status.muted{background:var(--jpk-gray-100);color:var(--jpk-gray-700)}
+
+/* "Send login details to everyone": who gets what, before sending */
+.login-plan-groups{list-style:none;margin:0;padding:0;display:grid;gap:8px;font-size:13.5px;line-height:1.5;color:var(--jpk-text)}
+.login-plan-groups li{padding:10px 12px;border:1px solid var(--jpk-line);border-radius:10px;background:#fff}
+.login-plan-groups li>b,.login-plan-groups label b{color:var(--jpk-navy);font-size:15px}
+.login-plan-groups li.opt{background:var(--jpk-gray-50)}
+.login-plan-groups li.opt label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.login-plan-groups li.opt input{margin-top:4px;flex:0 0 auto;width:16px;height:16px}
+.login-plan-groups li.muted{color:var(--jpk-muted);background:var(--jpk-gray-50)}
+.login-plan-groups li.warn{border-color:var(--jpk-orange-100);background:var(--jpk-orange-50)}
+.login-plan-names{display:block;margin-top:3px;font-size:12.5px;color:var(--jpk-muted)}
+.login-plan-names button{border:0;background:none;padding:0;min-height:0;height:auto;color:var(--jpk-navy);font-weight:600;font-size:12.5px;text-decoration:underline;cursor:pointer}
+.login-plan-loading{display:flex;align-items:center;gap:8px}
+.login-plan footer{gap:8px}
+.login-details-skipped{font-size:12.5px!important;color:var(--jpk-muted)!important}

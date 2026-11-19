@@ -12,6 +12,7 @@ router.patch('/users/:userId/permissions', requireAbility('ACCESS', 'MANAGE', 'S
 router.get('/access-grants', requireAbility('ACCESS', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.listAccessGrants);
 router.delete('/access-grants/:grantId', requireAbility('ACCESS', 'DELETE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.deleteAccessGrant);
 router.get('/login-details/summary', requireAbility('EMPLOYEES', 'MANAGE_LOGIN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.loginStatusSummary);
+router.get('/login-details/plan', requireAbility('EMPLOYEES', 'MANAGE_LOGIN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.loginDetailsPlan);
 router.post('/login-details/send-all', requireAbility('EMPLOYEES', 'MANAGE_LOGIN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.sendLoginDetailsToAll);
 router.get('/:id/letters/:type/download', controller.downloadLetter);
 router.post('/bulk-import', requireAbility('EMPLOYEES', 'CREATE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.bulkUpsertEmployees);
