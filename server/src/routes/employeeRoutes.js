@@ -19,6 +19,7 @@ router.post('/bulk-import', requireAbility('EMPLOYEES', 'CREATE', 'SUPER_ADMIN',
 router.post('/', requireAbility('EMPLOYEES', 'CREATE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.createEmployee);
 router.patch('/:id', requireAbility('EMPLOYEES', 'UPDATE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.updateEmployee);
 router.post('/:id/resend-login', requireAbility('EMPLOYEES', 'MANAGE_LOGIN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.resendLogin);
+router.post('/:id/portal-access/off', requireAbility('EMPLOYEES', 'MANAGE_LOGIN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.turnOffPortalAccess);
 router.post('/:id/offboard', requireAbility('EMPLOYEES', 'DELETE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.offboardEmployee);
 router.post('/access-grants', requireAbility('ACCESS', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.upsertAccessGrant);
 router.post('/:id/access-grants', requireAbility('ACCESS', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.upsertAccessGrant);

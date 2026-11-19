@@ -110,3 +110,24 @@
 .login-plan-loading{display:flex;align-items:center;gap:8px}
 .login-plan footer{gap:8px}
 .login-details-skipped{font-size:12.5px!important;color:var(--jpk-muted)!important}
+
+/* Profile: one box for portal access (give, new password, role, turn off) */
+.portal-access{display:grid;gap:12px;grid-column:1/-1}
+.pa-head{display:flex;gap:12px;align-items:flex-start}
+.pa-icon{flex:0 0 auto;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--jpk-gray-100);color:var(--jpk-navy)}
+.pa-icon.ok{background:#E8F3EC;color:#2E7D4F}
+.pa-icon.warn{background:var(--jpk-orange-50);color:var(--jpk-orange-700)}
+.pa-text{flex:1;min-width:0;display:grid;gap:2px}
+.pa-text small{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--jpk-faint);font-weight:600}
+.pa-text b{font-size:16px;color:var(--jpk-ink)}
+.pa-text p{margin:0;font-size:13.5px;line-height:1.5;color:var(--jpk-text)}
+.pa-role-tag{flex:0 0 auto;font-size:12px;font-weight:600;color:var(--jpk-navy);background:var(--jpk-navy-50,#EDF1F5);border-radius:999px;padding:4px 10px}
+.pa-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pa-actions button{display:inline-flex;align-items:center;gap:6px}
+.pa-actions .danger-lite{color:#B42318;border-color:#F4C7C3}
+.pa-actions .danger-lite:hover:not(:disabled){background:#FEF3F2}
+.pa-email{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%}
+.pa-email input{flex:1 1 220px;min-width:0}
+.pa-role{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--jpk-muted)}
+.pa-role select{min-width:130px}
+.pa-note{margin:0;font-size:12.5px;color:var(--jpk-muted)}

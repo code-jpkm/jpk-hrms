@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
+const { recordAudit } = require('../services/auditService');
 const ApiError = require('../utils/apiError');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
@@ -449,7 +450,9 @@ exports.resendLogin = asyncHandler(async (req, res) => {
   if (employee.status === 'OFFBOARDED') throw new ApiError(400, 'This employee is offboarded. Re-activate the profile before sending login details.');
   // Reuses an existing (e.g. disabled, unlinked) login for this email instead of
   // inserting a duplicate, which used to fail with E11000 for re-hired staff.
-  const user = await guard.resolveLoginForEmployee({ actor: req.user, tenantId: req.tenantId, employee, email: employee.email, phone: employee.phone, name: fullNameOf(employee) });
+  // "Give portal access" may pick the role for a brand-new login (Employee by default).
+  const defaultRole = (req.body || {}).role ? String(req.body.role).trim().toUpperCase() : undefined;
+  const user = await guard.resolveLoginForEmployee({ actor: req.user, tenantId: req.tenantId, employee, email: employee.email, phone: employee.phone, name: fullNameOf(employee), defaultRole });
   guard.assertCanManageAccount(req.user, user);
   if (String(employee.userId || '') !== String(user._id)) {
     employee.userId = user._id;
@@ -494,6 +497,20 @@ exports.loginStatusSummary = asyncHandler(async (req, res) => {
   const plan = await loginAccess.loginDetailsPlan({ tenantId: req.tenantId, actor: req.user });
   const counts = loginAccess.planCounts(plan);
   res.json({ withoutPassword: counts.toSend, ...counts });
+});
+
+/** "Turn off portal access": the person can no longer sign in. Their records stay. */
+exports.turnOffPortalAccess = asyncHandler(async (req, res) => {
+  const employee = await Employee.findOne({ _id: req.params.id, tenantId: req.tenantId });
+  if (!employee) throw new ApiError(404, 'Employee not found');
+  await assertProfileEmployeeVisible(req, employee._id);
+  const user = employee.userId ? await User.findOne({ _id: employee.userId, tenantId: req.tenantId }) : null;
+  if (!user) throw new ApiError(400, 'This employee has no portal access to turn off');
+  if (String(user._id) === String(req.user._id)) throw new ApiError(400, 'You cannot turn off your own portal access');
+  guard.assertCanManageAccount(req.user, user);
+  await User.updateOne({ _id: user._id, tenantId: req.tenantId }, { $set: { status: 'DISABLED' } });
+  await recordAudit({ tenantId: req.tenantId, module: 'EMPLOYEE', action: 'PORTAL_ACCESS_OFF', targetId: String(user._id), after: { status: 'DISABLED' }, reason: `Turned off portal access for ${fullNameOf(employee) || user.email}`, changedBy: req.user?._id });
+  res.json({ message: `Portal access turned off for ${fullNameOf(employee) || user.email}. They can no longer sign in.` });
 });
 
 exports.offboardEmployee = asyncHandler(async (req, res) => {

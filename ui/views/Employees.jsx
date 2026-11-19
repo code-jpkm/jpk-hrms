@@ -4,6 +4,7 @@ import { formatDate } from '../utils/time.js';
 import { useSearchParams } from '../lib/router.jsx';
 import LoginDetailsPanel from '../components/auth/LoginDetailsPanel.jsx';
 import LoginPlanDialog from '../components/auth/LoginPlanDialog.jsx';
+import PortalAccessCard from './employees/PortalAccessCard.jsx';
 import '../styles/login.css';
 import toast from 'react-hot-toast';
 import { Card, Empty, ErrorBox, Field } from '../components/Ui.jsx';
@@ -31,19 +32,11 @@ function initials(e) { return fullName(e).split(' ').filter(Boolean).slice(0,2).
 function v(x, fallback='-') { return x === 0 ? '0' : (x || fallback); }
 function employeePhoto(e) { return e?.profilePhotoUrl || ''; }
 // v27: password sign-in. Older (Google) logins have no password until HR sends login details.
-function loginStatus(e) {
-  const u = e?.userId;
-  if (!u || typeof u !== 'object') return { label: 'No login', tone: 'muted' };
-  if (u.status && u.status !== 'ACTIVE') return { label: 'Login disabled', tone: 'muted' };
-  if (!u.passwordChangedAt) return { label: 'No password yet', tone: 'warn' };
-  if (u.forcePasswordChange) return { label: 'Waiting for first sign-in', tone: 'warn' };
-  return { label: 'Password set', tone: 'ok' };
-}
 function isOnline(e) { const seen = e?.userId?.lastSeenAt; return Boolean(seen && (Date.now() - new Date(seen).getTime()) < 3 * 60 * 1000); }
 function lastActive(e) {
   if (isOnline(e)) return 'Online now';
   const value = e?.userId?.lastSeenAt || e?.userId?.lastLoginAt;
-  if (!value) return e?.userId ? 'Not active recently' : 'Portal access not enabled';
+  if (!value) return !e?.userId ? 'No portal access yet' : e.userId.status && e.userId.status !== 'ACTIVE' ? 'Portal access turned off' : 'Has not signed in yet';
   const diff = Date.now() - new Date(value).getTime();
   const minutes = Math.max(1, Math.floor(diff / 60000));
   if (minutes < 60) return `Last active ${minutes}m ago`;
@@ -182,14 +175,6 @@ export default function Employees() {
   }
   async function offboard(id) { if (!window.confirm('Offboard this employee and disable login?')) return; try { await post(`/employees/${id}/offboard`, {}); setMessage('Employee offboarded.'); reload(); } catch (err) { setSubmitError(err); } }
   async function deleteEmployee(id) { if (!window.confirm('Hard delete this employee?')) return; try { await remove(`/employees/${id}`); setMessage('Employee deleted.'); reload(); } catch (err) { setSubmitError(err); } }
-  async function resendLogin(id) {
-    const person = employees.find((x) => x._id === id);
-    if (!window.confirm(`Send new login details to ${person ? fullName(person) : 'this employee'}?\n\nThis makes a new temporary password, sends it by email / WhatsApp and signs them out of the HRMS until they use it.`)) return;
-    try {
-      const res = await post(`/employees/${id}/resend-login`, {}, { toast: false });
-      setLoginResult(res); reload(); reloadLoginSummary();
-    } catch (err) { setSubmitError(err); }
-  }
   // Opens the list of who gets login details; nothing is sent until HR confirms there.
   function sendLoginDetailsToAll() { setLoginPlanOpen(true); }
   async function downloadLetter(emp, type) { try { const blob = await api(`/employees/${emp._id}/letters/${type}/download`); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${type}-letter-${emp.employeeCode}.pdf`; a.click(); setTimeout(()=>URL.revokeObjectURL(url), 1000); toast.success('Employee letter download started'); } catch (err) { setSubmitError(err); toast.error(err.message || 'Could not download employee letter'); } }
@@ -214,12 +199,13 @@ export default function Employees() {
 
     {mode === 'profile' && selected && <section className="profile-view profile-v22">
       {isSuperAdmin && selected.needsProfileReview && <div className="profile-review-alert"><b>Profile update required</b><span>Missing: {(selected.profileReviewMissing || []).join(', ')}. Complete these fields so attendance, leave and payroll rules can work correctly.</span></div>}<div className="profile-banner profile-banner-v22"><EmployeeAvatar employee={selected} large/><div className="profile-title-v22"><span className={`presence-text ${isOnline(selected)?'online':''}`}><i/>{lastActive(selected)}</span><h1>{fullName(selected)}</h1><p>{selected.designation || 'Employee'} · {selected.department || 'General'}</p><div className="profile-tags"><Pill>{selected.employeeCode}</Pill><Pill>{selected.workLocation || 'FACTORY'}</Pill><Pill>{selected.employeeCategory || 'SALARIED'}</Pill><Pill tone="green">{selected.status || 'Active'}</Pill></div></div><div className="profile-buttons">{canUpdate && <button className="yellow-btn" onClick={()=>startEdit(selected)}>Edit profile</button>}<button onClick={()=>setMode('directory')}>← Directory</button>{canDelete && <button className="danger-soft" onClick={()=>deleteEmployee(selected._id)}>Delete</button>}</div></div>
-      <div className="quick-facts"><InfoRow label="Email" value={selected.email || selected.userId?.email} /><div className="info-row"><span>Login</span><strong><span className={`login-status ${loginStatus(selected).tone}`}>{loginStatus(selected).label}</span></strong></div><InfoRow label="Contact" value={selected.phone} /><InfoRow label="Reports To" value={selected.reportsTo ? `${selected.reportsTo.employeeCode} · ${selected.reportsTo.firstName || ''}` : 'Top level'} /><InfoRow label="Joined" value={selected.dateOfJoining ? formatDate(selected.dateOfJoining) : '-'} /></div>
+      <div className="quick-facts"><InfoRow label="Email" value={selected.email || selected.userId?.email} /><InfoRow label="Contact" value={selected.phone} /><InfoRow label="Reports To" value={selected.reportsTo ? `${selected.reportsTo.employeeCode} · ${selected.reportsTo.firstName || ''}` : 'Top level'} /><InfoRow label="Joined" value={selected.dateOfJoining ? formatDate(selected.dateOfJoining) : '-'} /></div>
+      <PortalAccessCard employee={selected} me={user} onChanged={() => { reload(); reloadLoginSummary(); }} onLoginResult={setLoginResult} />
       <Card title="Job & Reporting"><InfoRow label="Designation" value={selected.designation} /><InfoRow label="Department" value={selected.department} /><InfoRow label="Workplace" value={selected.workLocation} /><InfoRow label="Employment Type" value={selected.employmentType} /><InfoRow label="Category" value={selected.employeeCategory} /><InfoRow label="Boarding" value={selected.status} /></Card>
       <Card title="Personal"><InfoRow label="Gender" value={selected.personalDetails?.gender} /><InfoRow label="Date of Birth" value={selected.dateOfBirth ? formatDate(selected.dateOfBirth) : '-'} /><InfoRow label="Emergency Contact" value={`${v(selected.emergencyContact?.name)} ${selected.emergencyContact?.phone || ''}`} /><InfoRow label="Address" value={selected.personalDetails?.currentAddress} /></Card>
       <Card title="Statutory & Bank"><InfoRow label="Aadhaar No." value={selected.statutory?.aadharNumber} /><InfoRow label="PAN No." value={selected.statutory?.pan} /><InfoRow label="UAN" value={selected.statutory?.uan} /><InfoRow label="ESIC" value={selected.statutory?.esiNumber} /><InfoRow label="Bank" value={selected.bankDetails?.bankName} /></Card>
       {selected.salary && <Card title="Salary"><InfoRow label="Gross Salary" value={selected.salary?.gross} /><InfoRow label="Basic" value={selected.salary?.basic} /><InfoRow label="HRA" value={selected.salary?.hra} /><InfoRow label="Allowances" value={selected.salary?.allowances} /></Card>}
-      <Card title="Payroll & Letters" actions={<><button className="yellow-btn">₹ Revise Salary</button><button onClick={()=>downloadLetter(selected,'offer')}>Offer letter</button><button onClick={()=>downloadLetter(selected,'joining')}>Joining letter</button>{canManageLogin && <button onClick={()=>resendLogin(selected._id)}>🔑 Send login details</button>}{canDelete && <button onClick={()=>offboard(selected._id)}>Offboard</button>}</>}></Card>
+      <Card title="Payroll & Letters" actions={<><button className="yellow-btn">₹ Revise Salary</button><button onClick={()=>downloadLetter(selected,'offer')}>Offer letter</button><button onClick={()=>downloadLetter(selected,'joining')}>Joining letter</button>{canDelete && <button onClick={()=>offboard(selected._id)}>Offboard</button>}</>}></Card>
       {canReadDocuments && <EmployeeDocuments employeeId={selected._id} employeeName={`${selected.firstName || ''} ${selected.lastName || ''}`.trim()} canUpload={canUploadDocuments} canDelete={canDeleteDocuments} onChanged={reload} />}
     </section>}
 
