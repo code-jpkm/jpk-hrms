@@ -5,6 +5,8 @@ const payrollRunSchema = new mongoose.Schema({
   month: { type: String, required: true },
   status: { type: String, enum: ['DRAFT', 'FINALIZED'], default: 'DRAFT' },
   generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  releasedAt: Date,
+  releasedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   summary: {
     employeeCount: Number,
     grossTotal: Number,

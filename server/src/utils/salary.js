@@ -25,6 +25,19 @@ function roundMoney(value) {
 }
 
 /**
+ * Whole rupees, as on JPK's own payslips (Google Sheets ROUND): LOP 2193.55 → 2194,
+ * PF 1137.60 → 1138, ESI 111.05 → 111. On by default; a payroll rule can switch it
+ * off (`roundToRupee: false`) to keep paise.
+ */
+function roundRupee(value) {
+  return Math.round(Number(value || 0) + Number.EPSILON);
+}
+
+function rounderFor(rule) {
+  return rule?.roundToRupee === false ? roundMoney : roundRupee;
+}
+
+/**
  * DANGEROUS LEGACY BEHAVIOUR, now guarded.
  *
  * The PayrollRule schema stores rates as FRACTIONS (pf 0.12, esi 0.0075) but the
@@ -149,16 +162,21 @@ function applyLopWaterfall({ components, lopAmount, rule }) {
 }
 
 function calculateStatutoryDeductions({ employee, rule, salaryMaster }) {
+  const r = rounderFor(rule);
   if (salaryMaster?.calculationMode !== 'RULE_BASED_DEDUCTIONS') {
     const manual = masterDeductions(salaryMaster);
     if (salaryMaster) {
+      const pf = r(manual.pf);
+      const esi = r(manual.esi);
+      const ptax = r(manual.ptax);
+      const other = r(manual.otherDeductions);
       return {
-        pf: roundMoney(manual.pf),
-        esi: roundMoney(manual.esi),
-        ptax: roundMoney(manual.ptax),
-        custom: manual.otherDeductions ? { Other: roundMoney(manual.otherDeductions) } : {},
-        otherDeductions: roundMoney(manual.otherDeductions),
-        total: roundMoney(manual.pf + manual.esi + manual.ptax + manual.otherDeductions)
+        pf,
+        esi,
+        ptax,
+        custom: other ? { Other: other } : {},
+        otherDeductions: other,
+        total: roundMoney(pf + esi + ptax + other)
       };
     }
   }
@@ -195,32 +213,36 @@ function calculateStatutoryDeductions({ employee, rule, salaryMaster }) {
   }
 
   const custom = {};
-  let customTotal = Number(salaryMaster?.deductions?.otherDeductions || 0);
-  if (customTotal) custom.Other = roundMoney(customTotal);
+  let customTotal = r(salaryMaster?.deductions?.otherDeductions || 0);
+  if (customTotal) custom.Other = customTotal;
   for (const item of rule?.customDeductions || []) {
     if (item.enabled === false || !item.name) continue;
-    const amount = Number(item.amount || 0) + baseAmount(employee, item.calculationBase, salaryMaster) * asPercent(item.percent, 0);
+    const amount = r(Number(item.amount || 0) + baseAmount(employee, item.calculationBase, salaryMaster) * asPercent(item.percent, 0));
     custom[item.name] = roundMoney(Number(custom[item.name] || 0) + amount);
-    customTotal += amount;
+    customTotal = roundMoney(customTotal + amount);
   }
 
+  const pfAmount = r(pf);
+  const esiAmount = r(esi);
+  const ptaxAmount = r(ptax);
   return {
-    pf: roundMoney(pf),
-    esi: roundMoney(esi),
-    ptax: roundMoney(ptax),
+    pf: pfAmount,
+    esi: esiAmount,
+    ptax: ptaxAmount,
     custom,
     otherDeductions: roundMoney(customTotal),
-    total: roundMoney(pf + esi + ptax + customTotal)
+    total: roundMoney(pfAmount + esiAmount + ptaxAmount + customTotal)
   };
 }
 
 function calculateCustomEarnings({ employee, rule, salaryMaster }) {
+  const r = rounderFor(rule);
   const custom = {};
   let total = 0;
   for (const item of rule?.customEarnings || []) {
     if (item.enabled === false || !item.name) continue;
-    const amount = Number(item.amount || 0) + baseAmount(employee, item.calculationBase, salaryMaster) * asPercent(item.percent, 0);
-    custom[item.name] = roundMoney(amount);
+    const amount = r(Number(item.amount || 0) + baseAmount(employee, item.calculationBase, salaryMaster) * asPercent(item.percent, 0));
+    custom[item.name] = amount;
     total += amount;
   }
   return { custom, total: roundMoney(total) };
@@ -234,10 +256,13 @@ function calculateSalary({ employee, attendanceStats, rule, salaryMaster }) {
   const lopDays = roundMoney(workingDays - payableDays);
 
   const perDayGross = roundMoney(gross / workingDays);
-  const lopAmount = roundMoney(gross * (lopDays / workingDays));
+  const r = rounderFor(rule);
+  const lopAmount = r(gross * (lopDays / workingDays));
 
   const waterfall = applyLopWaterfall({ components: totals.earnings, lopAmount, rule });
   const earnings = waterfall.earned;
+  // Whole-rupee payroll: a component with paise in the salary master stays whole on the slip.
+  if (r === roundRupee) for (const key of COMPONENT_KEYS) earnings[key] = r(earnings[key]);
 
   // Prorated gross is the SUM of the earned components, so the payslip always
   // foots exactly. It equals gross - lopAmount whenever the LOP fits inside the
@@ -298,6 +323,8 @@ function calculateSalary({ employee, attendanceStats, rule, salaryMaster }) {
 }
 
 module.exports = {
+  roundRupee,
+  rounderFor,
   calculateSalary,
   calculateStatutoryDeductions,
   applyLopWaterfall,

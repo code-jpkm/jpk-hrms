@@ -15,10 +15,11 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 function sumExcept(obj, skip) {
   return Object.entries(obj || {}).reduce((t, [k, v]) => (skip.includes(k) ? t : t + (num(v) ?? num(v?.amount) ?? 0)), 0);
 }
-/** Earnings after unpaid-day cuts (the slip keeps full and prorated totals). */
+/** Earnings after unpaid-day cuts, with any bonus or other line HR added (the slip keeps full and prorated totals). */
 function earningsTotal(e) {
   if (!e) return 0;
-  return num(e.proratedGross) ?? num(e.gross) ?? sumExcept(e, ['gross', 'proratedGross']);
+  const total = e.total === undefined || e.total === null ? null : num(e.total);
+  return total ?? num(e.proratedGross) ?? num(e.gross) ?? sumExcept(e, ['gross', 'proratedGross']);
 }
 function deductionsTotal(d) {
   if (!d) return 0;
@@ -75,6 +76,7 @@ export default function PayScreen() {
               </View>
             )}
             {lopDays > 0 && <T v="small" style={{ marginTop: 8 }}>{lopDays} unpaid day{lopDays === 1 ? '' : 's'} ({money(slip.lop?.amount)}) already taken out of earnings.</T>}
+            {!!slip.notes && <T v="small" style={{ marginTop: 8 }}>Note: {slip.notes}</T>}
             <Button title="Download PDF" variant="secondary" icon={Download} small loading={busy === slip._id} onPress={() => download(slip)} style={{ marginTop: 12 }} />
           </Card>
         );

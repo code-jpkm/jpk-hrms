@@ -10,6 +10,8 @@ const payslipTemplateSchema = new mongoose.Schema({
   footerText: String,
   primaryColor: { type: String, default: '#1F3445' },
   showBankLast4: { type: Boolean, default: true },
+  // Bank account number on the payslip: in full (as on JPK's payslip), last 4 digits, or not at all.
+  bankAccountDisplay: { type: String, enum: ['FULL', 'LAST4', 'HIDE'], default: 'FULL' },
   showPfEsiNumbers: { type: Boolean, default: true },
   showAttendanceSummary: { type: Boolean, default: true },
   earningsLabels: [{ key: String, label: String }],

@@ -1,7 +1,11 @@
 import { currentMonthKey, monthLabel } from '../utils/time.js';
 import { PayrollReview, ExplainSlip } from './payroll/PayrollAi.jsx';
+import SendPayslips from './payroll/SendPayslips.jsx';
+import PayslipEditor from './payroll/PayslipEditor.jsx';
+import Icon from '../components/Icon.jsx';
 import '../styles/attendance.css';
 import '../styles/v26.css';
+import '../styles/payslip.css';
 import React, { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Card, Empty, ErrorBox, Field, Table } from '../components/Ui.jsx';
@@ -11,13 +15,11 @@ import { useAuth } from '../state/AuthContext.jsx';
 import { hasAbility } from '../utils/permissions.js';
 
 const defaultTemplate = {
-  name: 'Custom Payslip Format',
+  name: 'JPK payslip',
   companyName: '',
   companyAddress: '',
-  headerText: '',
-  footerText: 'Computer generated payslip.',
-  primaryColor: '#1F3445',
-  showBankLast4: true,
+  footerText: '*This is a system generated payslip and does not require signature.',
+  bankAccountDisplay: 'FULL',
   showPfEsiNumbers: true,
   showAttendanceSummary: true,
   earningsLabels: [{ key: 'basic', label: 'Basic' }, { key: 'hra', label: 'HRA' }, { key: 'conveyance', label: 'Conv.' }, { key: 'specialAllowance', label: 'Spl Allowance' }, { key: 'proratedGross', label: 'Gross Payable' }],
@@ -49,8 +51,8 @@ export default function Payroll() {
   const { data: salaryMastersData, error: salaryMastersError, reload: reloadSalaryMasters } = useApi(canReadPayrollAdmin ? `/payroll/salary-masters?activeAt=${month}` : '', [month, canReadPayrollAdmin]);
   const [payRule, setPayRule] = useState({ name: 'Default Payroll Rule', pf: { enabled: true, employeePercent: 0.12, employerPercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: true }, esi: { enabled: true, employeePercent: 0.0075, employerPercent: 0.0325, grossCap: 21000, calculationBase: 'GROSS' }, ptax: { enabled: true, defaultAmount: 200, slabs: [] }, customEarnings: [], customDeductions: [], notes: '' });
   const [template, setTemplate] = useState(defaultTemplate);
-  const [selected, setSelected] = useState([]);
-  const [share, setShare] = useState({ email: true, whatsapp: true, message: '' });
+  const [sendOpen, setSendOpen] = useState(false);
+  const [editingSlip, setEditingSlip] = useState('');
   const [salaryMaster, setSalaryMaster] = useState({ employeeId: '', effectiveMonth: currentMonthKey(), earnings: { basic: 0, hra: 0, conveyance: 0, specialAllowance: 0, otherEarnings: 0 }, deductions: { pf: 0, esi: 0, ptax: 0, otherDeductions: 0 }, calculationMode: 'RULE_BASED_DEDUCTIONS', notes: '' });
   const [error, setError] = useState(null);
   const [message, setMessage] = useState('');
@@ -74,9 +76,11 @@ export default function Payroll() {
   const salaryEmployee = employees.find((e) => e._id === salaryMaster.employeeId);
   const autoPfBase = payRule.pf?.calculationBase === 'GROSS' ? salaryGross : Number(salaryMaster.earnings.basic || 0);
   const autoPfCapped = payRule.pf?.applyWageCap === false ? autoPfBase : Math.min(autoPfBase, Number(payRule.pf?.wageCap || autoPfBase));
-  const autoPf = payRule.pf?.enabled === false || salaryEmployee?.statutory?.pfApplicable === false ? 0 : Math.round(autoPfCapped * pct(payRule.pf?.employeePercent, .12) * 100) / 100;
+  // Same rounding as the payroll engine: whole rupees unless the rule keeps paise.
+  const roundPay = (v) => (payRule.roundToRupee === false ? Math.round(v * 100) / 100 : Math.round(v));
+  const autoPf = payRule.pf?.enabled === false || salaryEmployee?.statutory?.pfApplicable === false ? 0 : roundPay(autoPfCapped * pct(payRule.pf?.employeePercent, .12));
   const autoEsiBase = payRule.esi?.calculationBase === 'BASIC' ? Number(salaryMaster.earnings.basic || 0) : salaryGross;
-  const autoEsi = payRule.esi?.enabled === false || salaryEmployee?.statutory?.esiApplicable === false || (payRule.esi?.grossCap && salaryGross > Number(payRule.esi.grossCap)) ? 0 : Math.round(autoEsiBase * pct(payRule.esi?.employeePercent, .0075) * 100) / 100;
+  const autoEsi = payRule.esi?.enabled === false || salaryEmployee?.statutory?.esiApplicable === false || (payRule.esi?.grossCap && salaryGross > Number(payRule.esi.grossCap)) ? 0 : roundPay(autoEsiBase * pct(payRule.esi?.employeePercent, .0075));
   const autoPtax = payRule.ptax?.enabled === false || salaryEmployee?.statutory?.ptaxApplicable === false ? 0 : Number((payRule.ptax?.slabs || []).find((x)=>salaryGross >= Number(x.from||0) && salaryGross <= Number(x.to||Number.MAX_SAFE_INTEGER))?.amount ?? payRule.ptax?.defaultAmount ?? 0);
   const autoNet = salaryGross - autoPf - autoEsi - autoPtax - Number(salaryMaster.deductions.otherDeductions || 0);
   const currentRun = useMemo(() => (runs?.runs || []).find((r) => r.month === month), [runs, month]);
@@ -88,6 +92,11 @@ export default function Payroll() {
   const finalizedRuns = useMemo(() => (runs?.runs || []).filter((r) => r.status === 'FINALIZED'), [runs]);
   const releasedRun = useMemo(() => finalizedRuns.find((r) => r.month === releasedMonth), [finalizedRuns, releasedMonth]);
   const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  const monthSlips = slips?.slips || [];
+  const isReleased = currentRun?.status === 'FINALIZED';
+  const changedAfterSending = (s) => Boolean(s.lastSharedAt && s.contentChangedAt && new Date(s.contentChangedAt) > new Date(s.lastSharedAt));
+  const sentCount = monthSlips.filter((s) => s.lastSharedAt).length;
+  const resendCount = monthSlips.filter(changedAfterSending).length;
   const toggleRevealMaster = (id) => setRevealedMasters((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   const toggleRevealSlip = (id) => setRevealedSlips((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
 
@@ -151,10 +160,11 @@ export default function Payroll() {
   async function releasePayroll() {
     if (!currentRun?._id) return;
     const pending = waiting.days ? `\n\n${waiting.people} employee(s) still have ${waiting.days} day(s) with a missing out time. They are paid as present unless you decide them on the attendance calendar first.` : '';
-    if (!window.confirm(`Release payroll for ${currentRun.month}? Employees will be notified.${pending}`)) return;
+    if (!window.confirm(`Release payroll for ${currentRun.month}?\n\nNobody is notified. You can still edit any payslip after release, then send payslips to the people you choose.${pending}`)) return;
     setError(null); setMessage('');
     try {
-      await post(`/payroll/runs/${currentRun._id}/release`, { reason: `Payroll ${currentRun.month} approved for release` }, { loadingMessage: `Releasing ${currentRun.month} payroll…`, successMessage: `Payroll ${currentRun.month} released` });
+      await post(`/payroll/runs/${currentRun._id}/release`, { reason: `Payroll ${currentRun.month} approved for release` }, { loadingMessage: `Releasing ${currentRun.month} payroll…`, successMessage: `Payroll ${currentRun.month} released. Nobody was notified.` });
+      setMessage(`Payroll ${currentRun.month} released. Nobody was notified. Edit any payslip if needed, then use Send payslips.`);
       setReleasedMonth(currentRun.month);
       reloadRuns(); reloadSlips();
     } catch (err) { setError(err); }
@@ -192,27 +202,6 @@ export default function Payroll() {
   }
 
 
-  function toggleSelected(id) {
-    setSelected((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
-  }
-
-  async function shareSelected() {
-    setError(null); setMessage('');
-    try {
-      const body = { salarySlipIds: selected, month, channels: { email: share.email, whatsapp: share.whatsapp }, message: share.message };
-      let res;
-      try { res = await post('/payroll/slips/share', body); }
-      catch (err) {
-        if (err.status !== 409) throw err;
-        if (!window.confirm(`${err.message}\n\nShare the draft slips anyway? Employees will see them in email/WhatsApp before payroll is released.`)) return;
-        res = await post('/payroll/slips/share', { ...body, allowDraft: true });
-      }
-      setMessage(`Payslips shared for ${res.shared} employee(s). Delivery status: Integrations → Delivery log.`);
-      setSelected([]);
-      reloadSlips();
-    } catch (err) { setError(err); }
-  }
-
   async function saveTemplate() {
     setError(null); setMessage('');
     try {
@@ -236,13 +225,11 @@ export default function Payroll() {
     setError(null); setMessage('');
     try { await post('/payroll/rules', payRule); setMessage('PF/ESI/PTax/payroll rule saved.'); reloadRules(); } catch (err) { setError(err); }
   }
-  async function adjustSlip(id) {
-    const reason = window.prompt('Reason for manual salary adjustment / special override?');
-    if (!reason) return;
-    const earningsAdjustment = Number(window.prompt('Extra earning amount? Use 0 if none.', '0') || 0);
-    const deductionAdjustment = Number(window.prompt('Extra deduction amount? Use 0 if none.', '0') || 0);
-    setError(null); setMessage('');
-    try { await post(`/payroll/slips/${id}/adjust`, { earningsAdjustment, deductionAdjustment, reason }); setMessage('Salary slip adjusted.'); reloadSlips(); } catch (err) { setError(err); }
+  function slipState(s) {
+    if (changedAfterSending(s)) return <span className="slip-state edited" title="Changed after it was sent. Send it again so the employee has the corrected payslip.">Changed after sending</span>;
+    if (s.lastSharedAt) return <span className="slip-state sent" title={`Sent ${new Date(s.lastSharedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`}>Sent</span>;
+    if (s.edits) return <span className="slip-state edited">Edited</span>;
+    return null;
   }
 
   return (
@@ -251,7 +238,7 @@ export default function Payroll() {
       <ErrorBox error={error || runsError || slipsError || templateError || rulesError || employeesError || salaryMastersError} />
 
       <div className="payroll-top-grid">
-        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}</div>{canReadPayrollAdmin&&currentRun?.status==='DRAFT'&&waiting.days>0&&<p className="payroll-review-note">{waiting.people} employee{waiting.people===1?'':'s'} {waiting.people===1?'has':'have'} {waiting.days} day{waiting.days===1?'':'s'} with a missing out time (yellow on the attendance calendar). They are paid as present until decided; deciding a day there updates this draft at once.</p>}</section>
+        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}</div>{canReadPayrollAdmin&&currentRun?.status==='DRAFT'&&waiting.days>0&&<p className="payroll-review-note">{waiting.people} employee{waiting.people===1?'':'s'} {waiting.people===1?'has':'have'} {waiting.days} day{waiting.days===1?'':'s'} with a missing out time (yellow on the attendance calendar). They are paid as present until decided; deciding a day there updates this draft at once.</p>}{canSharePayslips&&currentRun&&<div className="payroll-send-row">{isReleased?<><button className="primary" onClick={()=>setSendOpen(true)} disabled={!monthSlips.length}><Icon name="SendHorizontal" size={15}/> Send payslips</button><small>{sentCount} of {monthSlips.length} sent{resendCount?` · ${resendCount} changed after sending`:''}</small></>:<small>Nobody is notified on release. After release you can still edit payslips, then send them to the people you choose.</small>}</div>}</section>
 
         {canReadPayrollAdmin && <section className="premium-section-card released-payroll-card"><div className="premium-section-head"><div><small>RELEASED PAYROLL</small><h2>View a released month</h2><p>No salary amount is shown until a released month is selected.</p></div></div><Field label="Released month"><select value={releasedMonth} onChange={(e)=>setReleasedMonth(e.target.value)}><option value="">Select released payroll</option>{finalizedRuns.map((r)=><option key={r._id} value={r.month}>{r.month}</option>)}</select></Field>{releasedRun ? <div className="released-payroll-summary"><div><span>Net payout</span><b>{money(releasedRun.summary?.netTotal)}</b></div><div><span>Gross</span><b>{money(releasedRun.summary?.grossTotal)}</b></div><div><span>Deductions</span><b>{money(releasedRun.summary?.deductionTotal)}</b></div><div><span>Employees</span><b>{releasedRun.summary?.employeeCount||0}</b></div><div className="released-payroll-actions"><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'csv')}>Download CSV</button><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'pdf')}>Download PDF</button></div></div> : <div className="payroll-locked-placeholder"><span>◉</span><div><b>Amounts hidden</b><small>Select a released month above to reveal totals.</small></div></div>}</section>}
       </div>
@@ -292,16 +279,18 @@ export default function Payroll() {
         <Field label="ESI gross cap"><input type="number" value={payRule.esi?.grossCap || 0} onChange={(e) => setRule('esi.grossCap', Number(e.target.value))} /></Field>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.ptax?.enabled !== false} onChange={(e) => setRule('ptax.enabled', e.target.checked)} /><span><b>P.Tax enabled</b></span></label>
         <Field label="Default P.Tax"><input type="number" value={payRule.ptax?.defaultAmount || 0} onChange={(e) => setRule('ptax.defaultAmount', Number(e.target.value))} /></Field>
+        <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.roundToRupee !== false} onChange={(e) => setRule('roundToRupee', e.target.checked)} /><span><b>Whole rupees</b><small>Round LOP, salary parts and PF / ESI to the rupee, like the JPK payslip</small></span></label>
         <Field label="Change reason"><input value={payRule.notes || ''} onChange={(e) => setRule('notes', e.target.value)} /></Field>
       </div><details className="details-block"><summary>Advanced custom earnings / deduction JSON</summary><Field label="Custom earnings"><textarea rows="4" value={JSON.stringify(payRule.customEarnings || [], null, 2)} onChange={(e) => { try { setRule('customEarnings', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="Custom deductions"><textarea rows="4" value={JSON.stringify(payRule.customDeductions || [], null, 2)} onChange={(e) => { try { setRule('customDeductions', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="P.Tax slabs"><textarea rows="4" value={JSON.stringify(payRule.ptax?.slabs || [], null, 2)} onChange={(e) => { try { setRule('ptax.slabs', JSON.parse(e.target.value)); } catch (_) {} }} /></Field></details><button className="primary" onClick={savePayRule}>Save payroll rule</button></div></details>}
 
-      {canUpdateTemplate && <details className="premium-collapsible"><summary><div><small>PAYSLIP DESIGN</small><b>Payslip PDF designer</b><span>Keep PDF formatting out of the daily payroll workflow.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="form-grid"><Field label="Template name"><input value={template.name || ''} onChange={(e) => setTemplateValue('name', e.target.value)} /></Field><Field label="Company name"><input value={template.companyName || ''} onChange={(e) => setTemplateValue('companyName', e.target.value)} /></Field><Field label="Primary color"><input value={template.primaryColor || ''} onChange={(e) => setTemplateValue('primaryColor', e.target.value)} /></Field><Field label="Company address"><textarea value={template.companyAddress || ''} onChange={(e) => setTemplateValue('companyAddress', e.target.value)} /></Field><Field label="Header text"><textarea value={template.headerText || ''} onChange={(e) => setTemplateValue('headerText', e.target.value)} /></Field><Field label="Footer text"><textarea value={template.footerText || ''} onChange={(e) => setTemplateValue('footerText', e.target.value)} /></Field><label className="switch-row compact-switch"><input type="checkbox" checked={template.showBankLast4 !== false} onChange={(e) => setTemplateValue('showBankLast4', e.target.checked)} /><span><b>Show bank last 4</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={template.showPfEsiNumbers !== false} onChange={(e) => setTemplateValue('showPfEsiNumbers', e.target.checked)} /><span><b>Show PF/ESI numbers</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={template.showAttendanceSummary !== false} onChange={(e) => setTemplateValue('showAttendanceSummary', e.target.checked)} /><span><b>Show attendance summary</b></span></label></div><button className="primary" onClick={saveTemplate}>Save PDF format</button></div></details>}
+      {canUpdateTemplate && <details className="premium-collapsible"><summary><div><small>PAYSLIP DESIGN</small><b>Payslip PDF</b><span>Company heading, footer line and what the payslip shows.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="form-grid"><Field label="Template name"><input value={template.name || ''} onChange={(e) => setTemplateValue('name', e.target.value)} /></Field><Field label="Company name" hint="Empty: the company name from Settings."><input value={template.companyName || ''} onChange={(e) => setTemplateValue('companyName', e.target.value)} /></Field><Field label="Company address" hint="Printed under the company name. Empty: the office address."><textarea value={template.companyAddress || ''} onChange={(e) => setTemplateValue('companyAddress', e.target.value)} /></Field><Field label="Footer line"><textarea value={template.footerText || ''} onChange={(e) => setTemplateValue('footerText', e.target.value)} /></Field><Field label="Bank account number"><select value={template.bankAccountDisplay || 'FULL'} onChange={(e) => setTemplateValue('bankAccountDisplay', e.target.value)}><option value="FULL">Full number</option><option value="LAST4">Only the last 4 digits</option><option value="HIDE">Do not show</option></select></Field><label className="switch-row compact-switch"><input type="checkbox" checked={template.showPfEsiNumbers !== false} onChange={(e) => setTemplateValue('showPfEsiNumbers', e.target.checked)} /><span><b>Show PF No. and UAN</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={template.showAttendanceSummary !== false} onChange={(e) => setTemplateValue('showAttendanceSummary', e.target.checked)} /><span><b>Show work days and LOP</b></span></label></div><button className="primary" onClick={saveTemplate}>Save PDF format</button></div></details>}
 
-      {canSharePayslips && <details className="premium-collapsible"><summary><div><small>DELIVERY</small><b>Manual payslip sharing</b><span>Email / WhatsApp only when you explicitly open and send.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="share-options"><label className="switch-row compact-switch"><input type="checkbox" checked={share.email} onChange={(e) => setShare((s) => ({ ...s, email: e.target.checked }))} /><span><b>Email with PDF</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={share.whatsapp} onChange={(e) => setShare((s) => ({ ...s, whatsapp: e.target.checked }))} /><span><b>WhatsApp secure link</b></span></label></div><Field label="Optional message"><textarea value={share.message} onChange={(e) => setShare((s) => ({ ...s, message: e.target.value }))} /></Field><button className="primary" onClick={shareSelected} disabled={!selected.length}>Share selected payslips ({selected.length})</button></div></details>}
-
-      <section className="premium-section-card salary-slip-section"><div className="premium-section-head"><div><small>{monthLabel(month)}</small><h2>{canReadPayrollAdmin ? 'Salary slips' : 'My salary slips'}</h2><p>{canReadPayrollAdmin ? 'Salary figures stay hidden until you click the eye icon.' : 'Click the eye icon to see the amount, or download the PDF.'}</p></div><span>{slips?.slips?.length||0} slips</span></div>
-        {!slips?.slips?.length ? <Empty /> : <div className="private-slip-list">{slips.slips.map((s)=>{const open=revealedSlips.includes(s._id);return <article key={s._id} className={open?'revealed':''}><div className="private-slip-row">{canSharePayslips&&<input type="checkbox" checked={selected.includes(s._id)} onChange={()=>toggleSelected(s._id)}/>}<div className="salary-person"><span className="employee-mini-avatar">{`${s.employeeId?.firstName?.[0]||''}${s.employeeId?.lastName?.[0]||''}`}</span><div><b>{s.employeeId?.firstName} {s.employeeId?.lastName||''}</b><small>{s.employeeId?.employeeCode} · {s.month} · payable {s.attendanceStats?.payableDays??0}/{s.attendanceStats?.workingDays??0} days</small></div></div><span className={`lop-chip ${Number(s.attendanceStats?.attendanceLopDays||0)>0?'danger':''}`}>{s.attendanceStats?.attendanceLopDays||0} LOP</span><button className="salary-eye" onClick={()=>toggleRevealSlip(s._id)}>{open?'◉ Hide':'◌ View salary'}</button></div>{open&&<div className="slip-reveal-panel"><div className="salary-reveal-panel"><div><span>Basic</span><b>{money(s.earnings?.basic)}</b></div><div><span>HRA</span><b>{money(s.earnings?.hra)}</b></div><div><span>Conveyance</span><b>{money(s.earnings?.conveyance)}</b></div><div><span>Special</span><b>{money(s.earnings?.specialAllowance)}</b></div><div><span>Gross payable</span><b>{money(s.earnings?.proratedGross)}</b></div><div><span>Deductions</span><b>{money(s.deductions?.total)}</b></div><div className="accent"><span>Net pay</span><b>{money(s.netPay)}</b></div></div><div className="slip-actions"><button onClick={()=>downloadPdf(s._id)}>Download PDF</button><ExplainSlip slipId={s._id}/>{canAdjustPayslips&&<button onClick={()=>adjustSlip(s._id)}>Adjustment</button>}</div></div>}</article>})}</div>}
+      <section className="premium-section-card salary-slip-section"><div className="premium-section-head"><div><small>{monthLabel(month)}</small><h2>{canReadPayrollAdmin ? 'Salary slips' : 'My salary slips'}</h2><p>{canReadPayrollAdmin ? `Salary figures stay hidden until you click the eye icon.${canAdjustPayslips ? ' Edit opens the payslip to change any amount or add a line or a note.' : ''}` : 'Click the eye icon to see the amount, or download the PDF.'}</p></div><span>{monthSlips.length} slips</span></div>
+        {!slips?.slips?.length ? <Empty /> : <div className="private-slip-list">{slips.slips.map((s)=>{const open=revealedSlips.includes(s._id);return <article key={s._id} className={open?'revealed':''}><div className="private-slip-row ps-slip-row"><div className="salary-person"><span className="employee-mini-avatar">{`${s.employeeId?.firstName?.[0]||''}${s.employeeId?.lastName?.[0]||''}`}</span><div><b>{s.employeeId?.firstName} {s.employeeId?.lastName||''}</b><small>{s.employeeId?.employeeCode} · {s.month} · payable {s.attendanceStats?.payableDays??0}/{s.attendanceStats?.workingDays??0} days</small></div></div><div className="ps-slip-right">{canReadPayrollAdmin&&slipState(s)}<span className={`lop-chip ${Number(s.attendanceStats?.attendanceLopDays||0)>0?'danger':''}`}>{s.attendanceStats?.attendanceLopDays||0} LOP</span><button className="salary-eye" onClick={()=>toggleRevealSlip(s._id)}>{open?'◉ Hide':'◌ View salary'}</button>{canAdjustPayslips&&<button className="salary-eye ps-edit-btn" onClick={()=>setEditingSlip(s._id)} aria-label={`Edit the payslip of ${s.employeeId?.firstName||'this employee'}`}><Icon name="Pencil" size={13}/> Edit</button>}</div></div>{open&&<div className="slip-reveal-panel"><div className="salary-reveal-panel"><div><span>Basic</span><b>{money(s.earnings?.basic)}</b></div><div><span>HRA</span><b>{money(s.earnings?.hra)}</b></div><div><span>Conveyance</span><b>{money(s.earnings?.conveyance)}</b></div><div><span>Special</span><b>{money(s.earnings?.specialAllowance)}</b></div><div><span>Total earnings</span><b>{money(s.earnings?.total ?? s.earnings?.proratedGross)}</b></div><div><span>Deductions</span><b>{money(s.deductions?.total)}</b></div><div className="accent"><span>Net pay</span><b>{money(s.netPay)}</b></div></div><div className="slip-actions"><button onClick={()=>downloadPdf(s._id)}>Download PDF</button><ExplainSlip slipId={s._id}/></div></div>}</article>})}</div>}
       </section>
+
+      {sendOpen && <SendPayslips month={month} slips={monthSlips} onClose={() => setSendOpen(false)} onSent={() => reloadSlips()} />}
+      {editingSlip && <PayslipEditor slipId={editingSlip} canEdit={canAdjustPayslips} onClose={() => setEditingSlip('')} onSaved={() => { reloadSlips(); reloadRuns(); }} />}
     </div>
   );
 }

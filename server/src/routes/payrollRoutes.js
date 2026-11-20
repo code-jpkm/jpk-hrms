@@ -25,6 +25,10 @@ router.get('/payslip-template', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN',
 router.post('/payslip-template', requireAbility('PAYROLL', 'UPDATE_TEMPLATE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.saveTemplate);
 router.post('/slips/share', requireAbility('PAYROLL', 'SHARE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.shareSlips);
 router.post('/slips/:id/adjust', requireAbility('PAYROLL', 'ADJUST', 'SUPER_ADMIN', 'HR_ADMIN'), controller.adjustSlip);
+// The payslip line by line; HR edits amounts, extra lines and notes, before or after release.
+router.get('/slips/:id/payslip', controller.payslip);
+router.put('/slips/:id/payslip', requireAbility('PAYROLL', 'ADJUST', 'SUPER_ADMIN', 'HR_ADMIN'), controller.editPayslip);
+router.delete('/slips/:id/payslip', requireAbility('PAYROLL', 'ADJUST', 'SUPER_ADMIN', 'HR_ADMIN'), controller.resetPayslip);
 router.get('/slips', controller.slips);
 router.get('/slips/:id/pdf', controller.slipPdf);
 

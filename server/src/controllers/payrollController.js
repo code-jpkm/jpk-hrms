@@ -15,7 +15,8 @@ const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, hol
 const { calculateSalary, calculateStatutoryDeductions, roundMoney } = require('../utils/salary');
 const { readWorkbookRows, workbookBuffer } = require('../utils/excel');
 const { getActiveSalaryMastersMap } = require('../services/salaryMasterService');
-const { buildSlip } = require('../services/payrollSlipService');
+const { buildSlip, recalculateRunSummary } = require('../services/payrollSlipService');
+const { applySlipEdits, calculatedOf, payslipLines, editsFromRequest, rupeesInWords } = require('../services/payslipModel');
 const { evaluateMonth } = require('../services/attendanceRulesService');
 const { getScopedEmployeeIds } = require('../services/scopeService');
 const { writePayslipPdfToStream, payslipPdfBuffer, getActivePayslipTemplate } = require('../services/payslipPdfService');
@@ -47,17 +48,20 @@ async function salarySheetRows(req, runId) {
     hra: s.earnings?.hra || 0,
     conveyance: s.earnings?.conveyance || 0,
     specialAllowance: s.earnings?.specialAllowance || 0,
-    gross: s.earnings?.proratedGross || 0,
+    // Paid gross: salary parts plus any extra earning lines (bonus, arrears…) HR added.
+    gross: s.earnings?.total ?? s.earnings?.proratedGross ?? 0,
+    otherEarnings: roundMoney(Number(s.earnings?.total ?? s.earnings?.proratedGross ?? 0) - Number(s.earnings?.basic || 0) - Number(s.earnings?.hra || 0) - Number(s.earnings?.conveyance || 0) - Number(s.earnings?.specialAllowance || 0)),
     pf: s.deductions?.pf || 0,
     esi: s.deductions?.esi || 0,
     ptax: s.deductions?.ptax || 0,
+    otherDeductions: roundMoney(Number(s.deductions?.total || 0) - Number(s.deductions?.pf || 0) - Number(s.deductions?.esi || 0) - Number(s.deductions?.ptax || 0)),
     totalDeductions: s.deductions?.total || 0,
     netPay: s.netPay || 0
   }));
   const run = runDoc.toObject();
   run.summary = {
     employeeCount: slips.length,
-    grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.proratedGross || 0), 0)),
+    grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.total ?? slip.earnings?.proratedGross ?? 0), 0)),
     deductionTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.deductions?.total || 0), 0)),
     netTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.netPay || 0), 0))
   };
@@ -314,7 +318,7 @@ exports.runs = asyncHandler(async (req, res) => {
     const run = runDoc.toObject();
     run.summary = {
       employeeCount: slips.length,
-      grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.proratedGross || 0), 0)),
+      grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.total ?? slip.earnings?.proratedGross ?? 0), 0)),
       deductionTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.deductions?.total || 0), 0)),
       netTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.netPay || 0), 0))
     };
@@ -370,25 +374,25 @@ exports.runPayroll = asyncHandler(async (req, res) => {
   }
   // Manual adjustments made on the previous draft are kept and re-applied below;
   // re-generating used to drop them from net pay while still showing them on the slip.
-  const previousSlips = await SalarySlip.find({ tenantId: req.tenantId, month }).select('employeeId manualAdjustments').lean();
-  const adjustmentsByEmployee = new Map(previousSlips.map((slip) => [String(slip.employeeId), slip.manualAdjustments]));
+  const previousSlips = await SalarySlip.find({ tenantId: req.tenantId, month }).select('employeeId manualAdjustments edits netPay').lean();
+  const previousByEmployee = new Map(previousSlips.map((slip) => [String(slip.employeeId), slip]));
   let grossTotal = 0;
   let deductionTotal = 0;
   let netTotal = 0;
   const slips = [];
   const salaryMasterMap = await getActiveSalaryMastersMap({ tenantId: req.tenantId, employeeIds: employees.map((e) => e._id), month });
   for (const employee of employees) {
-    const { slip, calc, netPay } = await buildSlip({
+    const { slip, netPay, gross, deductionTotal: slipDeductions } = await buildSlip({
       tenantId: req.tenantId,
       run,
       employee,
       month,
       rule,
       salaryMaster: salaryMasterMap.get(String(employee._id)),
-      adjustment: adjustmentsByEmployee.get(String(employee._id)) || null
+      previous: previousByEmployee.get(String(employee._id)) || null
     });
-    grossTotal += calc.proratedGross;
-    deductionTotal += calc.deductions.total;
+    grossTotal += gross;
+    deductionTotal += slipDeductions;
     netTotal += netPay;
     slips.push(slip);
   }
@@ -414,6 +418,8 @@ exports.releaseRun = asyncHandler(async (req, res) => {
 
   const before = run.toObject();
   run.status = 'FINALIZED';
+  run.releasedAt = new Date();
+  run.releasedBy = req.user._id;
   await run.save();
   await RuleAudit.create({
     tenantId: req.tenantId,
@@ -426,21 +432,10 @@ exports.releaseRun = asyncHandler(async (req, res) => {
     changedBy: req.user._id
   });
 
-  const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id }).select('employeeId');
-  await Promise.all(slips.map((slip) => notifyEmployee({
-    tenantId: req.tenantId,
-    employeeId: slip.employeeId,
-    actorUserId: req.user._id,
-    type: 'PAYROLL_RELEASED',
-    title: `Payroll released · ${run.month}`,
-    body: `Payroll for ${run.month} has been released. Open Payroll to view your salary slip.`,
-    link: '/payroll',
-    entityType: 'PAYROLL_RUN',
-    entityId: run._id,
-    priority: 'NORMAL'
-  })));
-
-  res.json({ run, message: `Payroll for ${run.month} released successfully` });
+  // Releasing does not message anyone. Payslips can still be corrected after
+  // release; employees hear about their payslip only when HR sends it
+  // (Send payslips), and only the people HR picks.
+  res.json({ run, message: `Payroll for ${run.month} released. No one was notified; send payslips when they are ready.` });
 });
 
 exports.slips = asyncHandler(async (req, res) => {
@@ -462,6 +457,16 @@ exports.slips = asyncHandler(async (req, res) => {
   if (!isPayrollAdmin) {
     slips = slips.filter((slip) => slip.payrollRunId?.status === 'FINALIZED');
   }
+  // Employees get the payslip as paid, with its note: not the calculation
+  // behind HR's edits, who edited it, or the share-link token hash.
+  if (!isPayrollStaff(req.user)) {
+    slips = slips.map((slip) => {
+      const plain = slip.toObject();
+      const notes = plain.edits?.notes || '';
+      for (const key of ['calculated', 'edits', 'manualAdjustments', 'shareTokenHash', 'shareTokenExpiresAt', 'sharedBy', 'contentChangedAt']) delete plain[key];
+      return { ...plain, notes };
+    });
+  }
   res.json({ slips, releasedOnly: !isPayrollAdmin });
 });
 
@@ -472,8 +477,8 @@ exports.salarySheet = asyncHandler(async (req, res) => {
 
 exports.salarySheetCsv = asyncHandler(async (req, res) => {
   const { run, rows } = await salarySheetRows(req, req.params.runId);
-  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Gross', 'PF', 'ESI', 'PTax', 'Total Deductions', 'Net Pay'];
-  const body = rows.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.gross, r.pf, r.esi, r.ptax, r.totalDeductions, r.netPay].map(csvEscape).join(','));
+  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Other Earnings', 'Gross', 'PF', 'ESI', 'PTax', 'Other Deductions', 'Total Deductions', 'Net Pay'];
+  const body = rows.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.otherEarnings, r.gross, r.pf, r.esi, r.ptax, r.otherDeductions, r.totalDeductions, r.netPay].map(csvEscape).join(','));
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=salary-sheet-${run.month}.csv`);
   res.send([headers.join(','), ...body].join('\n'));
@@ -517,6 +522,11 @@ function isPayrollAdmin(user) {
   return ['SUPER_ADMIN', 'HR_ADMIN'].includes(user.role) || hasAbility(user, 'PAYROLL', 'RUN');
 }
 
+/** Anyone who works on payroll (run, read, edit or send payslips), as opposed to an employee viewing their own. */
+function isPayrollStaff(user) {
+  return isPayrollAdmin(user) || ['READ', 'ADJUST', 'SHARE'].some((action) => hasAbility(user, 'PAYROLL', action));
+}
+
 exports.slipPdf = asyncHandler(async (req, res) => {
   const slip = await findScopedSlip(req, req.params.id);
   // v26: the slip list hid drafts from employees, but the PDF link still served them.
@@ -548,26 +558,127 @@ exports.saveTemplate = asyncHandler(async (req, res) => {
   res.status(201).json({ template });
 });
 
+/** Saves a slip's paid figures from its calculation and HR's edits, with an audit entry and fresh run totals. */
+async function savePaidSlip(req, slip, edits, action, reason) {
+  const before = slip.toObject();
+  const calculated = calculatedOf(slip);
+  const paid = applySlipEdits(calculated, edits, null);
+  slip.calculated = calculated;
+  slip.edits = edits || undefined;
+  slip.manualAdjustments = undefined;
+  slip.earnings = paid.earnings;
+  slip.deductions = paid.deductions;
+  slip.netPay = paid.netPay;
+  slip.contentChangedAt = new Date();
+  slip.markModified('calculated');
+  slip.markModified('edits');
+  slip.markModified('earnings');
+  slip.markModified('deductions');
+  await slip.save();
+  await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYROLL', action, targetId: String(slip._id), before, after: slip.toObject(), reason: reason || '', changedBy: req.user._id });
+  const run = await PayrollRun.findOne({ _id: slip.payrollRunId?._id || slip.payrollRunId, tenantId: req.tenantId });
+  if (run) await recalculateRunSummary(run);
+  return slip;
+}
+
+function payslipResponse(slip) {
+  const payslip = payslipLines(slip);
+  return {
+    slipId: slip._id,
+    month: slip.month,
+    runStatus: slip.payrollRunId?.status || null,
+    employee: slip.employeeId ? { _id: slip.employeeId._id, employeeCode: slip.employeeId.employeeCode, firstName: slip.employeeId.firstName, lastName: slip.employeeId.lastName, department: slip.employeeId.department, designation: slip.employeeId.designation } : null,
+    netPay: slip.netPay,
+    netPayInWords: rupeesInWords(slip.netPay),
+    lastSharedAt: slip.lastSharedAt || null,
+    sharedChannels: slip.sharedChannels || [],
+    changedSinceSent: Boolean(slip.lastSharedAt && slip.contentChangedAt && slip.contentChangedAt > slip.lastSharedAt),
+    payslip
+  };
+}
+
+/** The payslip as an employee sees it: what is paid, without the calculation behind HR's edits. */
+function employeePayslipView(response) {
+  const p = response.payslip;
+  const line = ({ ref, label, master, amount }) => ({ ref, label, master, amount });
+  const extra = ({ id, label, amount }) => ({ id, label, amount });
+  return {
+    slipId: response.slipId,
+    month: response.month,
+    runStatus: response.runStatus,
+    employee: response.employee,
+    netPay: response.netPay,
+    netPayInWords: response.netPayInWords,
+    payslip: {
+      earnings: p.earnings.map(line),
+      deductions: p.deductions.map(line),
+      extraEarnings: p.extraEarnings.map(extra),
+      extraDeductions: p.extraDeductions.map(extra),
+      totals: p.totals,
+      info: { payableDays: p.info.payableDays, lopDays: p.info.lopDays, workingDays: p.info.workingDays },
+      notes: p.notes
+    }
+  };
+}
+
+/** GET /payroll/slips/:id/payslip — the payslip line by line (editor and preview). */
+exports.payslip = asyncHandler(async (req, res) => {
+  const slip = await findScopedSlip(req, req.params.id);
+  const canOpenDrafts = isPayrollAdmin(req.user) || hasAbility(req.user, 'PAYROLL', 'ADJUST');
+  if (!canOpenDrafts && slip.payrollRunId?.status !== 'FINALIZED') throw new ApiError(404, 'Salary slip not found');
+  const response = payslipResponse(slip);
+  res.json(isPayrollStaff(req.user) ? response : employeePayslipView(response));
+});
+
+/**
+ * PUT /payroll/slips/:id/payslip — HR edits a payslip directly: any line's
+ * amount, extra lines (bonus, loan…), the work days / LOP shown and a note.
+ * Works before and after release; nobody is notified (sending is separate).
+ */
+exports.editPayslip = asyncHandler(async (req, res) => {
+  const slip = await findScopedSlip(req, req.params.id);
+  let edits;
+  try {
+    edits = editsFromRequest(slip, req.body || {}, req.user);
+  } catch (error) {
+    throw new ApiError(400, error.message);
+  }
+  await savePaidSlip(req, slip, edits, 'SALARY_SLIP_EDIT', String(req.body?.reason || '').trim().slice(0, 300));
+  const response = payslipResponse(slip);
+  const who = `${slip.employeeId?.firstName || ''} ${slip.employeeId?.lastName || ''}`.trim();
+  const money = (v) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  res.json({ ...response, message: `${who}'s payslip saved. Net pay ${money(slip.netPay)}.${response.changedSinceSent ? ' It was already sent: send it again so they get the corrected one.' : ''}` });
+});
+
+/** DELETE /payroll/slips/:id/payslip — back to the calculated payslip. */
+exports.resetPayslip = asyncHandler(async (req, res) => {
+  const slip = await findScopedSlip(req, req.params.id);
+  await savePaidSlip(req, slip, null, 'SALARY_SLIP_EDIT_RESET', 'Payslip reset to the calculated figures');
+  res.json({ ...payslipResponse(slip), message: 'Payslip reset to the calculated figures.' });
+});
+
+/** Older "manual adjustment" call: now an extra earning / deduction line on the payslip. */
 exports.adjustSlip = asyncHandler(async (req, res) => {
   const slip = await findScopedSlip(req, req.params.id);
   if (!['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role) && !hasAbility(req.user, 'PAYROLL', 'ADJUST')) throw new ApiError(403, 'Only permitted users can adjust slips');
   const { earningsAdjustment = 0, deductionAdjustment = 0, reason = '' } = req.body;
-  const before = slip.toObject();
-  const previousEarningAdjustment = Number(slip.manualAdjustments?.earningsAdjustment ?? slip.manualAdjustments?.earning ?? 0);
-  const previousDeductionAdjustment = Number(slip.manualAdjustments?.deductionAdjustment ?? slip.manualAdjustments?.deduction ?? 0);
-  const baseNetPay = Number(slip.netPay || 0) - previousEarningAdjustment + previousDeductionAdjustment;
-  const nextEarningAdjustment = Number(earningsAdjustment || 0);
-  const nextDeductionAdjustment = Number(deductionAdjustment || 0);
-  slip.manualAdjustments = {
-    earningsAdjustment: nextEarningAdjustment,
-    deductionAdjustment: nextDeductionAdjustment,
-    reason,
-    adjustedBy: req.user._id,
-    adjustedAt: new Date()
-  };
-  slip.netPay = roundMoney(baseNetPay + nextEarningAdjustment - nextDeductionAdjustment);
-  await slip.save();
-  await RuleAudit.create({ tenantId: req.tenantId, module: 'PAYROLL', action: 'SALARY_SLIP_MANUAL_ADJUSTMENT', targetId: String(slip._id), before, after: slip.toObject(), reason, changedBy: req.user._id });
+  const current = payslipLines(slip);
+  const extra = [...current.extraEarnings.map((l) => ({ ...l, side: 'E' })), ...current.extraDeductions.map((l) => ({ ...l, side: 'D' }))]
+    .filter((l) => !['adjustment-e', 'adjustment-d'].includes(l.id));
+  if (Number(earningsAdjustment)) extra.push({ id: 'adjustment-e', side: 'E', label: 'ADJUSTMENT', amount: Number(earningsAdjustment) });
+  if (Number(deductionAdjustment)) extra.push({ id: 'adjustment-d', side: 'D', label: 'ADJUSTMENT', amount: Number(deductionAdjustment) });
+  let edits;
+  try {
+    edits = editsFromRequest(slip, {
+      lines: [...current.earnings, ...current.deductions].map((l) => ({ ref: l.ref, amount: l.amount })),
+      extra,
+      info: { payableDays: current.info.payableDays, lopDays: current.info.lopDays },
+      notes: current.notes
+    }, req.user);
+  } catch (error) {
+    throw new ApiError(400, error.message);
+  }
+  await savePaidSlip(req, slip, edits, 'SALARY_SLIP_MANUAL_ADJUSTMENT', reason);
   res.json({ slip });
 });
 
@@ -580,7 +691,8 @@ exports.shareSlips = asyncHandler(async (req, res) => {
   if (employeeIds.length) q.employeeId = { $in: employeeIds };
   if (month) q.month = month;
   if (!salarySlipIds.length && !employeeIds.length) throw new ApiError(400, 'Select at least one employee or salary slip');
-  const slips = await SalarySlip.find(q).populate('employeeId', 'employeeCode firstName lastName email phone salary department designation').populate('payrollRunId', 'month status');
+  // The whole employee record: the payslip prints joining date, bank, PAN, PF / UAN and location.
+  const slips = await SalarySlip.find(q).populate('employeeId').populate('payrollRunId', 'month status');
   if (salarySlipIds.length && slips.length !== new Set(salarySlipIds.map(String)).size) throw new ApiError(403, 'One or more selected salary slips are outside your salary scope');
   // Employees cannot open a draft slip in the portal, so sharing one sends them a
   // link to something they cannot see yet. Release the month first (or confirm).

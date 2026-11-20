@@ -97,8 +97,42 @@ function testSalaryProrationAndDeductions() {
   assert.equal(result.netPay, 48000);
 }
 
+// JPK's own payslip (Google Sheets, Jan 2026): master 9480 / 3792 / 1600 / 2128 = 17000,
+// 31 days, 4 LOP. The whole-rupee payroll must give exactly the same slip.
+function testJpkSamplePayslipInWholeRupees() {
+  const salaryMaster = {
+    _id: 'jpk-sample',
+    effectiveMonth: '2026-01',
+    calculationMode: 'RULE_BASED_DEDUCTIONS',
+    grossSalary: 17000,
+    earnings: { basic: 9480, hra: 3792, conveyance: 1600, specialAllowance: 2128, otherEarnings: 0 },
+    deductions: { pf: 0, esi: 0, ptax: 0, otherDeductions: 0 },
+    toObject() { return { ...this }; }
+  };
+  const rule = {
+    pf: { enabled: true, employeePercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: true },
+    esi: { enabled: true, employeePercent: 0.0075, grossCap: 21000, calculationBase: 'GROSS' },
+    ptax: { enabled: true, defaultAmount: 200, slabs: [{ from: 0, to: 10000, amount: 0 }, { from: 10001, to: 15000, amount: 110 }, { from: 15001, to: 25000, amount: 130 }, { from: 25001, to: 40000, amount: 150 }, { from: 40001, to: 9999999, amount: 200 }] }
+  };
+  const stats = { workingDays: 31, payableDays: 27 };
+  const slip = calculateSalary({ employee: { salary: {} }, attendanceStats: stats, rule, salaryMaster });
+  assert.equal(slip.lop.amount, 2194);
+  assert.deepEqual([slip.basic, slip.hra, slip.conveyance, slip.specialAllowance], [9480, 3792, 1534, 0]);
+  assert.equal(slip.proratedGross, 14806);
+  assert.deepEqual([slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax, slip.deductions.total], [1138, 111, 110, 1359]);
+  assert.equal(slip.netPay, 13447);
+  assert.deepEqual(slip.contractEarnings, { basic: 9480, hra: 3792, conveyance: 1600, specialAllowance: 2128, otherEarnings: 0 });
+
+  // A rule can keep paise instead.
+  const exact = calculateSalary({ employee: { salary: {} }, attendanceStats: stats, rule: { ...rule, roundToRupee: false }, salaryMaster });
+  assert.equal(exact.lop.amount, 2193.55);
+  assert.equal(exact.conveyance, 1534.45);
+  assert.equal(exact.deductions.pf, 1137.6);
+}
+
 testAttendanceClassification();
 testIndiaShiftWindowOnUtcServer();
 testShiftEditDoesNotKeepStaleFullDayThreshold();
 testSalaryProrationAndDeductions();
+testJpkSamplePayslipInWholeRupees();
 console.log('PASS: attendance classification and payroll calculation core tests');

@@ -11,6 +11,12 @@ const salarySlipSchema = new mongoose.Schema({
   earnings: mongoose.Schema.Types.Mixed,
   deductions: mongoose.Schema.Types.Mixed,
   manualAdjustments: mongoose.Schema.Types.Mixed,
+  // What the payroll engine worked out, before HR's edits (see services/payslipModel.js).
+  calculated: mongoose.Schema.Types.Mixed,
+  // HR's edits: changed lines, extra lines, a note printed on the slip, work days / LOP shown.
+  edits: mongoose.Schema.Types.Mixed,
+  // Last time the paid figures changed (recalculation or an edit): "changed since it was sent".
+  contentChangedAt: Date,
   // LOP waterfall audit trail (which component absorbed the loss of pay).
   lop: mongoose.Schema.Types.Mixed,
   netPay: Number,

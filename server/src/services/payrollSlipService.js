@@ -19,6 +19,7 @@ const PayrollRun = require('../models/PayrollRun');
 const SalarySlip = require('../models/SalarySlip');
 const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, holidayAppliesTo, companyToday } = require('../utils/date');
 const { calculateSalary, roundMoney } = require('../utils/salary');
+const { calculatedFromEngine, applySlipEdits } = require('./payslipModel');
 const { getActiveSalaryMastersMap } = require('./salaryMasterService');
 
 async function attendanceStatsFor(employee, month, tenantId) {
@@ -153,29 +154,48 @@ async function attendanceStatsFor(employee, month, tenantId) {
   };
 }
 
-/** Computes one employee's slip and saves it on the run. Manual adjustments are re-applied. */
-async function buildSlip({ tenantId, run, employee, month, rule, salaryMaster, adjustment }) {
+/**
+ * Computes one employee's slip and saves it on the run. HR's edits on the
+ * previous version (changed lines, extra lines, note) are kept on top of the
+ * new calculation; older "manual adjustments" are kept as extra lines.
+ */
+async function buildSlip({ tenantId, run, employee, month, rule, salaryMaster, adjustment, previous }) {
   const stats = await attendanceStatsFor(employee, month, tenantId);
   const calc = calculateSalary({ employee, attendanceStats: stats, rule, salaryMaster });
-  const earnings = { basic: calc.basic, hra: calc.hra, conveyance: calc.conveyance, specialAllowance: calc.specialAllowance, otherEarnings: calc.otherEarnings, gross: calc.gross, proratedGross: calc.proratedGross, custom: calc.customEarnings || {} };
-  const earningAdj = Number(adjustment?.earningsAdjustment ?? adjustment?.earning ?? 0);
-  const deductionAdj = Number(adjustment?.deductionAdjustment ?? adjustment?.deduction ?? 0);
-  const netPay = roundMoney(calc.netPay + earningAdj - deductionAdj);
+  const calculated = calculatedFromEngine(calc);
+  const edits = previous?.edits || null;
+  const paid = applySlipEdits(calculated, edits, edits ? null : (previous?.manualAdjustments || adjustment || null));
+  const changed = !previous || !Number.isFinite(Number(previous.netPay)) || Math.abs(Number(previous.netPay) - paid.netPay) >= 0.005;
   const slip = await SalarySlip.findOneAndUpdate(
     { tenantId, employeeId: employee._id, month },
-    { tenantId, payrollRunId: run._id, employeeId: employee._id, month, attendanceStats: stats, earnings, deductions: calc.deductions, lop: calc.lop, salaryMasterId: calc.salaryMasterId, salaryMasterEffectiveMonth: calc.salaryMasterEffectiveMonth, netPay, generatedAt: new Date() },
+    {
+      tenantId,
+      payrollRunId: run._id,
+      employeeId: employee._id,
+      month,
+      attendanceStats: stats,
+      earnings: paid.earnings,
+      deductions: paid.deductions,
+      calculated,
+      lop: calc.lop,
+      salaryMasterId: calc.salaryMasterId,
+      salaryMasterEffectiveMonth: calc.salaryMasterEffectiveMonth,
+      netPay: paid.netPay,
+      generatedAt: new Date(),
+      ...(changed ? { contentChangedAt: new Date() } : {})
+    },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
-  return { slip, calc, netPay, stats };
+  return { slip, calc, netPay: paid.netPay, stats, gross: paid.earnings.total, deductionTotal: paid.deductions.total };
 }
 
 /** Run totals from the slips on it, so a recalculated slip shows up in the totals at once. */
 async function recalculateRunSummary(run) {
-  const slips = await SalarySlip.find({ tenantId: run.tenantId, payrollRunId: run._id }).select('earnings.proratedGross deductions.total netPay').lean();
+  const slips = await SalarySlip.find({ tenantId: run.tenantId, payrollRunId: run._id }).select('earnings.proratedGross earnings.total deductions.total netPay').lean();
   const sum = (pick) => roundMoney(slips.reduce((total, slip) => total + Number(pick(slip) || 0), 0));
   run.summary = {
     employeeCount: slips.length,
-    grossTotal: sum((s) => s.earnings?.proratedGross),
+    grossTotal: sum((s) => s.earnings?.total ?? s.earnings?.proratedGross),
     deductionTotal: sum((s) => s.deductions?.total),
     netTotal: sum((s) => s.netPay)
   };
@@ -216,7 +236,7 @@ async function refreshPayrollAfterAttendanceChange({ tenantId, employeeIds = [],
       if (!employees.length) { results.push({ month, state: 'UPDATED', employees: 0, summary: run.summary }); continue; }
       const [masters, previousSlips] = await Promise.all([
         getActiveSalaryMastersMap({ tenantId, employeeIds: employees.map((e) => e._id), month }),
-        SalarySlip.find({ tenantId, month, employeeId: { $in: employees.map((e) => e._id) } }).select('employeeId manualAdjustments netPay attendanceStats.attendanceLopDays').lean()
+        SalarySlip.find({ tenantId, month, employeeId: { $in: employees.map((e) => e._id) } }).select('employeeId manualAdjustments edits netPay attendanceStats.attendanceLopDays').lean()
       ]);
       const previousBy = new Map(previousSlips.map((slip) => [String(slip.employeeId), slip]));
       const changes = [];
@@ -229,7 +249,7 @@ async function refreshPayrollAfterAttendanceChange({ tenantId, employeeIds = [],
           month,
           rule,
           salaryMaster: masters.get(String(employee._id)),
-          adjustment: before?.manualAdjustments || null
+          previous: before || null
         });
         changes.push({
           employeeId: String(employee._id),

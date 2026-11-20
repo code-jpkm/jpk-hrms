@@ -26,6 +26,8 @@ const payrollRuleSchema = new mongoose.Schema({
   },
   customEarnings: [{ name: String, amount: Number, percent: Number, calculationBase: { type: String, enum: ['BASIC', 'GROSS'], default: 'GROSS' }, enabled: { type: Boolean, default: true } }],
   customDeductions: [{ name: String, amount: Number, percent: Number, calculationBase: { type: String, enum: ['BASIC', 'GROSS'], default: 'GROSS' }, enabled: { type: Boolean, default: true } }],
+  // Whole rupees on every slip line (LOP, components, PF / ESI / PT), like JPK's own payslips.
+  roundToRupee: { type: Boolean, default: true },
   notes: String
 }, { timestamps: true });
 

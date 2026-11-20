@@ -1,0 +1,111 @@
+/* Payslip editor (drawer) and Send payslips (dialog). Uses the attendance drawer frame. */
+.att-drawer.ps-drawer{width:min(860px,100vw)}
+.ps-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ps-chip{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;background:#F2F2F3;color:#3D3D41;font-size:11.5px;font-weight:700}
+.ps-chip.is-released{background:#EFF3F6;color:#1F3445}
+.ps-chip.is-sent{background:#E7F4EC;color:#1D6B3A}
+.ps-chip.is-edited{background:#FFF1B8;color:#5C4500}
+.ps-form{display:grid;gap:14px}
+.ps-days{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 14px;padding:12px 14px;border:1px solid #E1E1E4;border-radius:10px;background:#FAFAFB}
+.ps-days label{display:grid;gap:5px;font-size:12px;font-weight:600;color:#55555A}
+.ps-days input{width:110px;height:38px;border-radius:8px;border:1px solid #E1E1E4;padding:0 10px;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.ps-days small{flex:1 1 260px;font-size:11.5px;color:#807F84;font-weight:600;line-height:1.4}
+.ps-table{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);border:1px solid #142330;border-radius:4px;overflow:hidden;font-family:'Times New Roman',Times,serif}
+.ps-side{display:grid;align-content:start;min-width:0}
+.ps-side+.ps-side{border-left:1px solid #142330}
+.ps-head{display:grid;grid-template-columns:minmax(0,1fr) 70px 128px;gap:8px;padding:6px 10px;border-bottom:1px solid #142330;font-weight:700;font-size:13px}
+.ps-head span:nth-child(n+2){text-align:right}
+.ps-head-d{grid-template-columns:minmax(0,1fr) 128px}
+.ps-row{display:grid;grid-template-columns:minmax(0,1fr) 70px 128px;gap:8px;align-items:center;padding:4px 10px;min-height:38px;font-size:13.5px}
+.ps-row-d{grid-template-columns:minmax(0,1fr) 128px}
+.ps-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ps-master{text-align:right;color:#55555A;font-variant-numeric:tabular-nums}
+.ps-amount{display:flex;align-items:center;justify-content:flex-end;gap:4px}
+.ps-amount.is-edited{flex-direction:column;align-items:flex-end;gap:2px}
+.ps-amount input{width:100%;max-width:118px;height:32px;border-radius:6px;border:1px solid #D2D1D5;padding:0 8px;text-align:right;font:inherit;font-variant-numeric:tabular-nums;background:#FFFFFF}
+.ps-amount input:focus{outline:none;border-color:#1F3445;box-shadow:0 0 0 3px rgba(31,52,69,.12)}
+.ps-amount input::-webkit-outer-spin-button,.ps-amount input::-webkit-inner-spin-button,.ps-days input::-webkit-outer-spin-button,.ps-days input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.ps-amount input[type=number],.ps-days input[type=number]{-moz-appearance:textfield;appearance:textfield}
+.ps-amount.is-edited input{border-color:#E0B000;background:#FFFBEA}
+.ps-revert{display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 5px;border:0;border-radius:4px;background:transparent;color:#8A6A00;font:600 11px/1 Inter,system-ui,sans-serif;cursor:pointer}
+.ps-revert:hover{background:#FFF1B8;transform:none}
+.ps-label-input{height:32px;border-radius:6px;border:1px dashed #A2A1A6;padding:0 8px;font:inherit;text-transform:uppercase;min-width:0;width:100%}
+.ps-drop{width:24px;height:24px;flex:0 0 auto;border-radius:6px;border:1px solid #E1E1E4;background:#FFFFFF;color:#807F84;display:grid;place-items:center;padding:0;cursor:pointer}
+.ps-drop:hover{color:#A45210;border-color:#F8B57D}
+.ps-row.is-extra .ps-amount input{max-width:92px}
+.ps-add{justify-self:start;display:inline-flex;align-items:center;gap:6px;margin:4px 10px 8px;height:30px;padding:0 10px;border-radius:8px;border:1px dashed #A2A1A6;background:#FFFFFF;color:#1F3445;font:600 12px Inter,system-ui,sans-serif;cursor:pointer}
+.ps-add:hover{border-style:solid;border-color:#1F3445;transform:none}
+.ps-total{border-top:1px solid #142330;margin-top:auto;font-weight:600}
+.ps-total b{text-align:right;font-variant-numeric:tabular-nums;padding-right:2px}
+.ps-side .ps-total:last-child{align-self:end}
+.ps-net{display:grid;gap:3px;padding:12px 14px;border-radius:10px;background:#EFF3F6;border:1px solid #D9E1E8}
+.ps-net>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ps-net span{font-weight:700;color:#142330}
+.ps-net b{font-size:22px;color:#1F3445;font-variant-numeric:tabular-nums}
+.ps-net small{font-size:12px;color:#55555A;font-weight:600}
+.ps-net .ps-calc-net{color:#8A6A00}
+.ps-field{display:grid;gap:6px;font-size:12px;font-weight:600;color:#55555A}
+.ps-field i{font-style:normal;font-weight:500;color:#A2A1A6}
+.ps-field textarea,.ps-field input{border-radius:8px;border:1px solid #E1E1E4;padding:9px 12px;font-size:13.5px;font-family:inherit;color:#142330;background:#FFFFFF}
+.ps-field textarea{min-height:64px;resize:vertical}
+.ps-field input{height:40px;padding:0 12px}
+.ps-actions{margin-top:2px}
+.ps-unsaved{font-size:12px;font-weight:700;color:#8A6A00}
+.ps-hint{font-size:11.5px;color:#807F84;font-weight:600}
+
+/* Send payslips */
+.att-drawer-backdrop.ps-modal-backdrop{justify-content:center;align-items:center;padding:16px}
+.ps-modal{width:min(640px,100%);max-height:min(860px,calc(100vh - 32px));display:flex;flex-direction:column;background:#FFFFFF;border-radius:14px;box-shadow:0 24px 70px rgba(20,35,48,.22);overflow:hidden}
+.ps-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px;border-bottom:1px solid #E1E1E4}
+.ps-modal-head small{font-size:11px;font-weight:700;letter-spacing:.06em;color:#807F84}
+.ps-modal-head h2{margin:3px 0 0;font-size:19px;letter-spacing:-.01em}
+.ps-modal-body{padding:14px 18px;display:grid;gap:12px;overflow:auto}
+.ps-modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 18px;border-top:1px solid #E1E1E4;background:#FAFAFB}
+.ps-send-options{display:flex;flex-wrap:wrap;gap:8px}
+.ps-toggle{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:8px;border:1px solid #E1E1E4;font-size:13px;font-weight:600;cursor:pointer}
+.ps-toggle input{width:16px;height:16px;accent-color:#1F3445}
+.ps-search{height:40px;border-radius:8px;border:1px solid #E1E1E4;padding:0 12px;font-size:13.5px}
+.ps-send-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;color:#55555A}
+.ps-send-bar b{color:#142330}
+.ps-send-bulk{display:inline-flex;gap:6px}
+.ps-send-bulk button,.ps-link{height:28px;padding:0 10px;border-radius:7px;border:1px solid #E1E1E4;background:#FFFFFF;font:600 12px Inter,system-ui,sans-serif;color:#1F3445;cursor:pointer}
+.ps-link{display:inline-flex;align-items:center;gap:6px;border:0;padding:0;background:transparent}
+.ps-send-list{display:grid;gap:4px;max-height:340px;overflow:auto;padding:2px}
+.ps-send-list.is-sent{max-height:220px;margin-top:6px}
+.ps-send-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;border:1px solid #EEEEF0;cursor:pointer}
+.ps-send-row.is-on{border-color:#C3CDD6;background:#F7F9FB}
+.ps-send-row input{width:17px;height:17px;accent-color:#1F3445}
+.ps-send-who{min-width:0}
+.ps-send-who b{display:block;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ps-send-who small{display:block;font-size:11.5px;color:#807F84;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ps-send-flags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.ps-flag{font-style:normal;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:#F2F2F3;color:#55555A}
+.ps-flag.bad{background:#FDE7D4;color:#A45210}
+.ps-flag.warn{background:#FFF1B8;color:#5C4500}
+.ps-empty{margin:6px 2px;font-size:13px;color:#807F84;font-weight:600}
+.ps-sent-block{border-top:1px dashed #E1E1E4;padding-top:8px}
+
+/* Payroll page bits */
+.payroll-send-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}
+.payroll-send-row small{font-size:12px;color:#55555A;font-weight:600;line-height:1.45}
+.payroll-send-row button{display:inline-flex;align-items:center;gap:7px}
+.private-slip-row.ps-slip-row{grid-template-columns:minmax(0,1fr) auto!important}
+.ps-slip-right{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.ps-edit-btn{display:inline-flex!important;align-items:center;gap:5px}
+.slip-state{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;background:#F2F2F3;color:#55555A;white-space:nowrap}
+.slip-state.sent{background:#E7F4EC;color:#1D6B3A}
+.slip-state.edited{background:#FFF1B8;color:#5C4500}
+
+@media (max-width:760px){
+  .private-slip-row.ps-slip-row{grid-template-columns:minmax(0,1fr)!important}
+  .ps-slip-right{justify-content:flex-start;padding-left:2px}
+  .ps-slip-right .lop-chip{display:none}
+}
+@media (max-width:720px){
+  .ps-table{grid-template-columns:1fr}
+  .ps-side+.ps-side{border-left:0;border-top:1px solid #142330}
+  .ps-head,.ps-row{grid-template-columns:minmax(0,1fr) 56px 112px}
+  .ps-head-d,.ps-row-d{grid-template-columns:minmax(0,1fr) 112px}
+  .att-drawer-backdrop.ps-modal-backdrop{padding:0;align-items:flex-end}
+  .ps-modal{border-radius:16px 16px 0 0;max-height:92vh}
+}

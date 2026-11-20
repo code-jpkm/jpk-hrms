@@ -222,14 +222,19 @@ function drawEarningsTable(doc, block, context, slip) {
     ['Special Allowance', money(e.specialAllowance)],
     ['Other Earnings', money(e.otherEarnings)]
   ].filter((r) => Number(String(r[1]).replace(/,/g, '')) !== 0);
-  earnRows.push(['Gross Earnings', money(e.proratedGross ?? e.gross)]);
+  // Lines HR added on the payslip (bonus, arrears…) and rule-based extra earnings, so the table foots to net pay.
+  for (const [name, amount] of Object.entries(e.custom || {})) if (Number(amount)) earnRows.push([name, money(amount)]);
+  for (const line of e.extra || []) earnRows.push([line.label, money(line.amount)]);
+  earnRows.push(['Gross Earnings', money(e.total ?? e.proratedGross ?? e.gross)]);
 
   const dedRows = [
     ['Provident Fund', money(d.pf)],
     ['ESI', money(d.esi)],
-    ['Professional Tax', money(d.ptax)]
+    ['Professional Tax', money(d.ptax)],
+    ['Loan', money(d.loan)]
   ].filter((r) => Number(String(r[1]).replace(/,/g, '')) !== 0);
   for (const [name, amount] of Object.entries(d.custom || {})) dedRows.push([name, money(amount)]);
+  for (const line of d.extra || []) dedRows.push([line.label, money(line.amount)]);
   dedRows.push(['Total Deductions', money(d.total)]);
 
   doc.save();
