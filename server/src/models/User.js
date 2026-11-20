@@ -59,4 +59,21 @@ userSchema.set('toJSON', {
   }
 });
 
+// Keep the signed-in cache (middleware/auth.js) honest: any change to a user
+// clears that user, except the once-a-minute "last seen" heartbeat.
+const authCache = require('../services/authCache');
+const { watchWrites } = require('../services/memoCache');
+
+const presenceOnly = (update) => {
+  if (!update || typeof update !== 'object') return false;
+  const keys = Object.keys(update).filter((k) => k !== '$setOnInsert');
+  const fields = Object.keys(update.$set || {});
+  return keys.length === 1 && keys[0] === '$set' && fields.includes('lastSeenAt') && fields.every((k) => k === 'lastSeenAt' || k === 'updatedAt');
+};
+watchWrites(userSchema, ({ ids, update }) => {
+  if (presenceOnly(update)) return;
+  if (ids) ids.forEach((id) => authCache.delete(id));
+  else authCache.clear();
+});
+
 module.exports = mongoose.model('User', userSchema);

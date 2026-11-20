@@ -10,8 +10,11 @@ exports.logs = asyncHandler(async (req, res) => {
 
 exports.inbox = asyncHandler(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit || 30), 1), 100);
-  const notifications = await InAppNotification.find({ tenantId: req.tenantId, recipientUserId: req.user._id }).sort('-createdAt').limit(limit);
-  const unreadCount = await InAppNotification.countDocuments({ tenantId: req.tenantId, recipientUserId: req.user._id, readAt: { $exists: false } });
+  // Both at once: the database may be far from the server, and this runs every minute per open tab.
+  const [notifications, unreadCount] = await Promise.all([
+    InAppNotification.find({ tenantId: req.tenantId, recipientUserId: req.user._id }).sort('-createdAt').limit(limit).lean(),
+    InAppNotification.countDocuments({ tenantId: req.tenantId, recipientUserId: req.user._id, readAt: { $exists: false } })
+  ]);
   res.json({ notifications, unreadCount });
 });
 

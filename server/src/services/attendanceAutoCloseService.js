@@ -66,9 +66,22 @@ async function isStillOpenForCheckout({ tenantId, employeeId, attendance, policy
  * Scoped to one employee when `employeeId` is supplied (called lazily before a
  * punch), or tenant-wide from the scheduler.
  */
-async function autoCloseStalePunches({ tenantId, employeeId = null, now = new Date(), lookbackHours = 72 }) {
+const policyCache = require('./policyCache');
+const { freeze, thaw } = require('./memoCache');
+
+/** The active policy (else any), kept for a minute like getPolicy; cleared when a policy is saved. */
+async function activePolicy(tenantId) {
+  const key = `active:${tenantId}`;
+  const cached = policyCache.get(key);
+  if (cached) return thaw(AttendancePolicy, cached);
   const policy = await AttendancePolicy.findOne({ tenantId, active: true })
     || await AttendancePolicy.findOne({ tenantId });
+  if (policy) policyCache.set(key, freeze(policy));
+  return policy;
+}
+
+async function autoCloseStalePunches({ tenantId, employeeId = null, now = new Date(), lookbackHours = 72 }) {
+  const policy = await activePolicy(tenantId);
   const offset = resolveTimezoneOffset(policy);
 
   const query = {

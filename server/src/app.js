@@ -22,6 +22,17 @@ app.set('query parser', 'simple');
 // themselves. Mounted before the JSON parsers and the API rate limit: they send
 // plain text and check in every half minute.
 app.use('/iclock', require('./routes/admsRoutes'));
+// How long the server itself took, visible in the browser's network panel
+// ("Server-Timing"): total time minus this is the distance to the server.
+app.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  const writeHead = res.writeHead;
+  res.writeHead = function timedWriteHead(...args) {
+    if (!res.headersSent) res.setHeader('Server-Timing', `app;dur=${(Number(process.hrtime.bigint() - started) / 1e6).toFixed(1)}`);
+    return writeHead.apply(this, args);
+  };
+  next();
+});
 app.use(helmet());
 app.use(compression());
 // v27: the website is served by this same app, so its own pages are always
@@ -56,7 +67,28 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(rateLimit({ windowMs: 60 * 1000, max: Number(process.env.RATE_LIMIT_PER_MINUTE || 300), standardHeaders: true, legacyHeaders: false }));
 
 const BUILD = 'v27.0';
-app.get('/health', (req, res) => res.json({ ok: true, service: 'hrms-api', build: BUILD }));
+app.get('/health', async (req, res) => {
+  if (req.query.check !== 'db') return res.json({ ok: true, service: 'hrms-api', build: BUILD });
+  // /health?check=db: how far the database is from this server (three pings, in ms).
+  const mongoose = require('mongoose');
+  const pings = [];
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      const t0 = process.hrtime.bigint();
+      await mongoose.connection.db.admin().ping();
+      pings.push(Math.round(Number(process.hrtime.bigint() - t0) / 1e6));
+    }
+  } catch (error) {
+    return res.status(503).json({ ok: false, build: BUILD, db: 'not reachable' });
+  }
+  return res.json({
+    ok: true,
+    build: BUILD,
+    dbPingMs: pings,
+    uptimeMinutes: Math.round(process.uptime() / 60),
+    memoryMb: Math.round(process.memoryUsage().rss / 1048576)
+  });
+});
 
 /**
  * Answers "is the server I am hitting actually the build I just installed?".

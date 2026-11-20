@@ -33,4 +33,9 @@ const attendancePolicySchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+// services/attendanceRulesService.js keeps the policy for a minute; any change clears it.
+const policyCache = require('../services/policyCache');
+const { watchWrites } = require('../services/memoCache');
+watchWrites(attendancePolicySchema, () => policyCache.clear());
+
 module.exports = mongoose.model('AttendancePolicy', attendancePolicySchema);

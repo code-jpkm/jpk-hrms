@@ -56,10 +56,15 @@ export default function NotificationCenter() {
 
   useEffect(() => {
     load({ silent: true });
-    const timer = window.setInterval(() => load({ silent: true }), 25_000);
-    const onFocus = () => load({ silent: true });
-    window.addEventListener('focus', onFocus);
-    return () => { window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
+    // Once a minute, and only while the tab is in front: every open tab used to
+    // ask every 25 s, which kept the server busy for people who were not looking.
+    let last = Date.now();
+    const poll = () => { if (document.hidden) return; last = Date.now(); load({ silent: true }); };
+    const timer = window.setInterval(poll, 60_000);
+    const onBack = () => { if (!document.hidden && Date.now() - last > 15_000) poll(); };
+    window.addEventListener('focus', onBack);
+    document.addEventListener('visibilitychange', onBack);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', onBack); document.removeEventListener('visibilitychange', onBack); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

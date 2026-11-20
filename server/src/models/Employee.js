@@ -162,4 +162,10 @@ employeeSchema.pre('validate', function setProbationDates(next) {
 employeeSchema.set('toJSON', { virtuals: true });
 employeeSchema.set('toObject', { virtuals: true });
 
+// The signed-in cache (middleware/auth.js) holds each user's employee record:
+// any employee change clears it, so the next request reads the new record.
+const authCache = require('../services/authCache');
+const { watchWrites } = require('../services/memoCache');
+watchWrites(employeeSchema, () => authCache.clear());
+
 module.exports = mongoose.model('Employee', employeeSchema);

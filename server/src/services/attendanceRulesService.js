@@ -7,9 +7,16 @@ const Shift = require('../models/Shift');
 const { monthRange, startOfDay, endOfDay, dateKey, calendarDay } = require('../utils/date');
 const { computeShiftWindow, minutesBetween, statusFromWorkedMinutes, resolveTimezoneOffset, measureAgainstWindow } = require('../utils/shift');
 
+const policyCache = require('./policyCache');
+const { freeze, thaw } = require('./memoCache');
+
+/** The company's attendance policy (cached for a minute, cleared when it is saved). */
 async function getPolicy(tenantId) {
+  const cached = policyCache.get(tenantId);
+  if (cached) return thaw(AttendancePolicy, cached);
   let policy = await AttendancePolicy.findOne({ tenantId });
   if (!policy) policy = await AttendancePolicy.create({ tenantId });
+  policyCache.set(tenantId, freeze(policy));
   return policy;
 }
 

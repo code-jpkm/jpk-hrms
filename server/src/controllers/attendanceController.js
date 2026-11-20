@@ -176,16 +176,19 @@ async function getMobileAttendanceContext(req) {
     timestamp: now
   });
   const resolvedDate = startOfDay(resolved.attendanceDate || now);
-  let attendance = await Attendance.findOne({
-    tenantId: req.tenantId,
-    employeeId: employee._id,
-    date: resolvedDate
-  });
-
   // Close anything past its deadline BEFORE deciding what this punch means.
   // Without this a forgotten check-out from yesterday would still be offered
   // today, and the morning check-in would be written as yesterday's check-out.
-  await autoCloseStalePunches({ tenantId: req.tenantId, employeeId: employee._id, now });
+  // Today's record is read at the same time (it was always read before the
+  // close), which saves one trip to the database.
+  let [attendance] = await Promise.all([
+    Attendance.findOne({
+      tenantId: req.tenantId,
+      employeeId: employee._id,
+      date: resolvedDate
+    }),
+    autoCloseStalePunches({ tenantId: req.tenantId, employeeId: employee._id, now })
+  ]);
 
   // Overnight shifts legitimately check out after midnight, so an open record
   // from the previous duty date is still offered — but only while it is inside

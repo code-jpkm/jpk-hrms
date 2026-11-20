@@ -4,6 +4,32 @@ const ApiError = require('../utils/apiError');
 const { jwtSecret } = require('../config/env');
 const User = require('../models/User');
 const Employee = require('../models/Employee');
+const signedIn = require('../services/authCache');
+
+/**
+ * The user and their employee record, from the short cache when possible
+ * (services/authCache.js). On a miss both are read at the same time: the
+ * token already says which company the user belongs to.
+ */
+async function whoIs(payload) {
+  const key = String(payload.sub);
+  let entry = signedIn.get(key);
+  if (!entry) {
+    let [user, employee] = await Promise.all([
+      User.findById(payload.sub).lean(),
+      payload.tenantId ? Employee.findOne({ userId: payload.sub, tenantId: payload.tenantId }).lean() : null
+    ]);
+    if (user && String(user.tenantId) !== String(payload.tenantId || '')) {
+      employee = await Employee.findOne({ userId: user._id, tenantId: user.tenantId }).lean();
+    }
+    entry = { user: user ? JSON.stringify(user) : null, employee: employee ? JSON.stringify(employee) : null };
+    if (user) signedIn.set(key, entry);
+  }
+  return {
+    user: entry.user ? User.hydrate(JSON.parse(entry.user)) : null,
+    employee: entry.employee ? Employee.hydrate(JSON.parse(entry.employee)) : null
+  };
+}
 
 const auth = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
@@ -15,7 +41,7 @@ const auth = asyncHandler(async (req, res, next) => {
   } catch (error) {
     throw new ApiError(401, 'Invalid or expired token');
   }
-  const user = await User.findById(payload.sub);
+  const { user, employee } = await whoIs(payload);
   if (!user || user.status !== 'ACTIVE') throw new ApiError(401, 'User not active');
   // A password change (or new login details from HR) signs out every older session.
   if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < new Date(user.passwordChangedAt).getTime() - 2000) {
@@ -26,15 +52,20 @@ const auth = asyncHandler(async (req, res, next) => {
   if (user.forcePasswordChange && !String(req.originalUrl || '').startsWith('/api/auth/')) {
     throw new ApiError(403, 'Choose your own password first.', { code: 'PASSWORD_CHANGE_REQUIRED' });
   }
-  const employee = await Employee.findOne({ userId: user._id, tenantId: user.tenantId });
-
   // Lightweight presence heartbeat. Any normal authenticated activity keeps the
   // employee directory's Online / Last active indicator fresh without a noisy
   // write on every request.
   const now = new Date();
   if (!user.lastSeenAt || now.getTime() - new Date(user.lastSeenAt).getTime() >= 60_000) {
     user.lastSeenAt = now;
-    User.updateOne({ _id: user._id }, { $set: { lastSeenAt: now } }).catch(() => {});
+    // timestamps: false — being seen online is not an edit of the user.
+    User.updateOne({ _id: user._id }, { $set: { lastSeenAt: now } }, { timestamps: false }).catch(() => {});
+    signedIn.update(user._id, (entry) => {
+      if (!entry?.user) return entry;
+      const u = JSON.parse(entry.user);
+      u.lastSeenAt = now;
+      return { ...entry, user: JSON.stringify(u) };
+    });
   }
 
   req.user = user;
