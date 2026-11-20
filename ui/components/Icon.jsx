@@ -24,6 +24,7 @@ import {
   Wifi, WifiOff, Cloud, Monitor, Router, Check,
   CloudRain, CloudDrizzle, CloudLightning, CloudSun, CloudMoon, CloudFog, CloudSnow, CloudSunRain, CloudMoonRain,
   Snowflake, Wind, Droplets, Thermometer, Umbrella, LocateFixed, Haze, Leaf,
+  Minus, Minimize2, ListTree, FileDown,
 } from 'lucide-react';
 
 const MAP = {
@@ -50,6 +51,7 @@ const MAP = {
   Wifi, WifiOff, Cloud, Monitor, Router, Check,
   CloudRain, CloudDrizzle, CloudLightning, CloudSun, CloudMoon, CloudFog, CloudSnow, CloudSunRain, CloudMoonRain,
   Snowflake, Wind, Droplets, Thermometer, Umbrella, LocateFixed, Haze, Leaf,
+  Minus, Minimize2, ListTree, FileDown,
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 2, className, style }) {
