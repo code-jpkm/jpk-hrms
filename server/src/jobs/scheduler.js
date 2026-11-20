@@ -130,7 +130,7 @@ async function sendMissingCheckInAlerts(now = new Date()) {
     // started (plus an hour's grace) yet, is not a missing check-in.
     const day = new Date(`${todayKey}T00:00:00.000Z`);
     const [assignments, defaultShift] = await Promise.all([
-      ShiftAssignment.find({ tenantId: tenant._id, employeeId: { $in: ids }, fromDate: { $lte: day }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }] }).populate('shiftId').sort('fromDate').lean(),
+      ShiftAssignment.find({ tenantId: tenant._id, employeeId: { $in: ids }, fromDate: { $lte: day }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }] }).populate('shiftId').sort('fromDate createdAt').lean(),
       Shift.findOne({ tenantId: tenant._id, active: true }).sort('createdAt').lean()
     ]);
     const shiftBy = new Map();

@@ -19,7 +19,7 @@ const STARTERS = [
   ['Holiday announcement', 'Holiday notice', 'The office and plant will remain closed on <date> for <festival>. Regular shifts resume on <date>. Wishing you and your family a happy festival.'],
   ['Safety reminder', 'Safety first', 'A reminder to wear helmets, safety shoes and gloves at all times on the shop floor. Report any unsafe condition to your supervisor immediately.'],
   ['Payslips released', 'Salary slips are ready', 'Salary slips for <month> are now available in the HRMS under Payroll. Please check them and contact HR within 3 days if anything looks wrong.'],
-  ['Attendance reminder', 'Punch in and out every day', 'Please remember to punch in and out on the biometric device every day. Days with a missing punch count as absent until a regularization is approved.'],
+  ['Attendance reminder', 'Punch in and out every day', 'Please remember to punch in and out on the biometric device every day. A day with a missing punch is held for HR to decide, so please send the correct time as a correction straight away.'],
   ['Policy update', 'Policy update', 'We have updated the <policy name>. The key change is <change>. It applies from <date>. Reach out to HR with any questions.']
 ];
 

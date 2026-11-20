@@ -55,8 +55,8 @@ function EmployeePicker({ employees, value, onChange, selfId }) {
 function Kpis({ summary }) {
   if (!summary) return <div className="att-kpis">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="att-skeleton" style={{ minHeight: 104 }} />)}</div>;
   const items = [
-    ['present', 'UserRoundCheck', summary.present, 'Present days', `${summary.wfh ? `${summary.wfh} WFH · ` : ''}${summary.halfDays} half day${summary.halfDays === 1 ? '' : 's'}`],
-    ['absent', 'UserX', summary.absent, 'Absent', summary.missingPunches ? `${summary.missingPunches} missing punch` : 'without leave'],
+    ['present', 'UserRoundCheck', summary.present, 'Present days', summary.needsReview ? `${summary.needsReview} out time missing · needs a decision` : `${summary.wfh ? `${summary.wfh} WFH · ` : ''}${summary.halfDays} half day${summary.halfDays === 1 ? '' : 's'}`],
+    ['absent', 'UserX', summary.absent, 'Absent', 'without leave'],
     ['leave', 'Palmtree', summary.leaveDays, 'Leave days', `${summary.holidays} holiday${summary.holidays === 1 ? '' : 's'} this month`],
     ['late', 'AlarmClock', summary.lateDays, 'Late arrivals', summary.lateMinutes ? `${summary.lateMinutes} min in total` : 'none so far'],
     ['early', 'LogOut', summary.earlyLeaveDays, 'Early exits', 'before shift end'],
@@ -81,6 +81,19 @@ export default function Attendance() {
   const canImport = hasAbility(user, 'ATTENDANCE', 'IMPORT');
   const canEvaluate = hasAbility(user, 'ATTENDANCE', 'EVALUATE') || ['SUPER_ADMIN', 'HR_ADMIN', 'MANAGER'].includes(user?.role);
   const canRequestForOthers = hasAbility(user, 'REGULARIZATION', 'APPLY_ON_BEHALF');
+  const isManager = user?.role === 'MANAGER';
+  // What the day drawer may offer. The server checks each action again
+  // (scope, reporting line), so these only decide which buttons are shown.
+  const dayPerms = {
+    canOverride,
+    canFixTimes: canOverride || canRequestForOthers || isManager,
+    canManageShifts: hasAbility(user, 'SHIFTS', 'MANAGE'),
+    canDecideLeave: hasAbility(user, 'LEAVE', 'APPROVE') || isManager,
+    canAddLeave: canOverride || hasAbility(user, 'LEAVE', 'APPLY_ON_BEHALF') || isManager,
+    canDecideRequests: hasAbility(user, 'REGULARIZATION', 'APPROVE') || isManager,
+    canRequestForOthers,
+    selfApproves: user?.role === 'SUPER_ADMIN'
+  };
   const canMessage = ['SUPER_ADMIN', 'HR_ADMIN'].includes(user?.role) || hasAbility(user, 'NOTICES', 'MANAGE') || hasAbility(user, 'MESSAGES', 'SEND');
 
   const [month, setMonth] = useState(currentMonthKey());
@@ -125,7 +138,7 @@ export default function Attendance() {
 
   const viewed = calendar?.employee || employees.find((e) => e._id === calendarEmployeeId);
   const isSelf = calendarEmployeeId && employee?._id && String(calendarEmployeeId) === String(employee._id);
-  const issues = (calendar?.days || []).filter((d) => ['ABSENT', 'HALF_DAY'].includes(d.status) || d.missingPunch || d.lopDays > 0).filter((d) => !d.isFuture).length;
+  const issues = (calendar?.days || []).filter((d) => ['ABSENT', 'HALF_DAY', 'REVIEW'].includes(d.status) || d.missingPunch || d.lopDays > 0).filter((d) => !d.isFuture).length;
 
   async function punch(mode) {
     setPunching(true); setNotice(null);
@@ -154,7 +167,7 @@ export default function Attendance() {
   }
 
   async function recalculate() {
-    try { await post('/attendance/evaluate-month', { month }, { loadingMessage: `Recalculating ${monthLabel(month)}…`, successMessage: 'Month recalculated with the latest rules' }); await reloadCalendar(); } catch (_) { /* toast shown */ }
+    try { await post('/attendance/evaluate-month', { month }, { loadingMessage: `Recalculating ${monthLabel(month)}…` }); await reloadCalendar(); } catch (_) { /* toast shown */ }
   }
 
   async function importLogs() {
@@ -217,11 +230,21 @@ export default function Attendance() {
           day={selectedDay}
           employee={viewed}
           isSelf={Boolean(isSelf)}
-          canOverride={canOverride}
-          canRequestForOthers={canRequestForOthers}
+          perms={isSelf ? { ...dayPerms, canFixTimes: canOverride, canDecideLeave: false, canDecideRequests: false } : dayPerms}
+          payrollStatus={calendar?.payroll?.status || null}
           showWfh={showWfh}
           onClose={() => setSelectedDay(null)}
-          onSaved={() => { reloadCalendar(); reloadMobile().catch(() => {}); }}
+          onSaved={(freshDay) => {
+            // The drawer stays open on the same day and shows its new state.
+            if (freshDay) setSelectedDay(freshDay);
+            reloadCalendar().then((cal) => {
+              if (!freshDay && cal?.days) {
+                const again = cal.days.find((d) => d.date === selectedDay?.date);
+                if (again) setSelectedDay(again);
+              }
+            }).catch(() => {});
+            reloadMobile().catch(() => {});
+          }}
         />
       )}
 

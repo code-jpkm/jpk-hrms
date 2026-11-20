@@ -5,7 +5,7 @@ const Regularization = require('../models/Regularization');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
 const { monthRange, startOfDay, endOfDay, dateKey, calendarDay } = require('../utils/date');
-const { computeShiftWindow, minutesBetween, statusFromWorkedMinutes, resolveTimezoneOffset, measureAgainstWindow } = require('../utils/shift');
+const { computeShiftWindow, minutesBetween, statusFromWorkedMinutes, resolveTimezoneOffset, measureAgainstWindow, effectiveGraceMinutes } = require('../utils/shift');
 
 const policyCache = require('./policyCache');
 const { freeze, thaw } = require('./memoCache');
@@ -25,6 +25,18 @@ function employeeKey(value) {
   return String(value?._id || value || '');
 }
 
+/**
+ * Writes the evaluation only when it changed something. Opening a calendar or
+ * re-checking a month used to rewrite every day every time (one database trip
+ * each, far away on Render); now unchanged days cost nothing.
+ */
+function saveIfChanged(attendance, policy) {
+  if (!attendance.isNew && attendance.evaluatedAt && !attendance.isModified()) return attendance;
+  attendance.evaluatedAt = new Date();
+  attendance.policySnapshot = typeof policy?.toObject === 'function' ? policy.toObject() : policy;
+  return attendance.save();
+}
+
 async function getShiftForDate({ tenantId, employeeId, date, context }) {
   const day = startOfDay(date);
   if (context?.shiftAssignmentsByEmployee) {
@@ -41,7 +53,7 @@ async function getShiftForDate({ tenantId, employeeId, date, context }) {
     employeeId,
     fromDate: { $lte: day },
     $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }]
-  }).sort('-fromDate').populate('shiftId');
+  }).sort('-fromDate -createdAt').populate('shiftId');
   if (assignment?.shiftId) return assignment.shiftId;
   return Shift.findOne({ tenantId, active: true }).sort('createdAt');
 }
@@ -220,9 +232,8 @@ async function evaluateAttendanceRecord(attendance, context = null) {
     attendance.deductionReason = attendance.status === 'LEAVE' && Number(attendance.lopDays || 0) > 0
       ? 'Half-day leave approved; remaining half requires attendance or regularization'
       : (attendance.deductionReason || '');
-    attendance.evaluatedAt = new Date();
-    attendance.policySnapshot = policy.toObject();
-    return attendance.save();
+    attendance.needsReview = false;
+    return saveIfChanged(attendance, policy);
   }
 
   const shift = await getShiftForDate({
@@ -245,28 +256,51 @@ async function evaluateAttendanceRecord(attendance, context = null) {
     const attendanceDay = startOfDay(attendance.date);
     const today = startOfDay(new Date());
 
+    const onePunch = Boolean(attendance.checkIn) !== Boolean(attendance.checkOut);
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    // Yesterday's punch may still be open (a night shift, or the hourly auto-close
+    // has not run yet). Older days, and days the system closed, are settled.
+    const dayIsClosed = Boolean(attendance.autoClosed || attendance.missingCheckOut) || attendanceDay < yesterday;
+    // Assigned once at the end: flipping a path false then back to true would
+    // mark it modified and rewrite an unchanged day on every calendar view.
+    let needsReview = false;
     if (attendance.checkIn && attendance.checkOut && punchDriven) {
       attendance.status = statusFromWorkedMinutes(shift, attendance.checkIn, attendance.checkOut, 'PRESENT', { belowHalfDayStatus: policy.belowHalfDayStatus });
-    } else if (punchDriven && attendanceDay < today && (!attendance.checkIn || !attendance.checkOut)) {
-      // An old duty day with only one punch cannot remain PRESENT forever. It is
-      // automatically treated as absent until HR approves a regularization.
+    } else if (punchDriven && !attendance.checkIn && !attendance.checkOut && attendanceDay < today) {
       attendance.status = 'ABSENT';
-      attendance.deductionReason = 'Incomplete punch pair: regularization required';
+      attendance.deductionReason = 'No punch recorded';
+    } else if (punchDriven && onePunch && attendanceDay < today && dayIsClosed && !attendance.lopOverride?.enabled) {
+      // One punch on a closed day: the out (or in) time is missing. That is never
+      // loss of pay on its own: the day waits, shown in yellow, until HR / admin
+      // decides from the calendar (present, half day, absent, or the real time).
+      attendance.status = 'PRESENT';
+      needsReview = true;
+      attendance.deductionReason = attendance.checkIn
+        ? 'Out time missing: waiting for HR / admin to decide. No loss of pay until then.'
+        : 'In time missing: waiting for HR / admin to decide. No loss of pay until then.';
     }
-    const calculatedLop = baseLopForStatus(attendance.status);
+    attendance.needsReview = needsReview;
+    const calculatedLop = needsReview ? 0 : baseLopForStatus(attendance.status);
     if (attendance.lopOverride?.enabled) {
       attendance.lopOverride.originalLopDays = calculatedLop;
       attendance.lopDays = Number(attendance.lopOverride.overrideLopDays || 0);
     } else {
       attendance.lopDays = calculatedLop;
     }
-    attendance.evaluatedAt = new Date();
-    attendance.policySnapshot = policy.toObject();
-    return attendance.save();
+    return saveIfChanged(attendance, policy);
   }
 
   const window = computeShiftWindow(shift, attendance.date, resolveTimezoneOffset(policy));
-  const measured = measureAgainstWindow({ window, checkIn: attendance.checkIn, checkOut: attendance.checkOut });
+  // Late counts only from the first second after the grace (10:15:00 for a 10:00
+  // start with 15 min), and early leave only beyond the policy's early tolerance.
+  const measured = measureAgainstWindow({
+    window,
+    checkIn: attendance.checkIn,
+    checkOut: attendance.checkOut,
+    graceMinutes: effectiveGraceMinutes(policy, shift),
+    earlyToleranceMinutes: Number(policy.earlyLeaveAllowedMinutes || 0)
+  });
+  attendance.needsReview = false;
   const lateMinutes = measured.lateMinutes;
   const earlyLeaveMinutes = measured.earlyLeaveMinutes;
   const workedMinutes = measured.workedMinutes;
@@ -340,7 +374,6 @@ async function evaluateAttendanceRecord(attendance, context = null) {
     } else if (exceptionCursor <= combinedQuota) {
       protectLateFromCustomPenalty = true;
       forgivenMinutes += lateMinutes;
-      graceUsed = lateMinutes <= Number(policy.lateGraceMinutes || 0);
       reasons.push(`Monthly late/early exception ${exceptionCursor}/${combinedQuota}: late ${lateMinutes}m permitted`);
       if (latePermission) attendance.permissionRequestId = latePermission._id;
     } else {
@@ -417,6 +450,10 @@ async function evaluateAttendanceRecord(attendance, context = null) {
     reasons.push(`Day settled as ${status}: monthly exception quota refunded (base ${baseLopAfterStatus} LOP governs)`);
   }
 
+  if (measured.withinGrace) {
+    graceUsed = true;
+    reasons.push(`Arrived within the ${effectiveGraceMinutes(policy, shift)} min grace: on time`);
+  }
   attendance.lateMinutes = lateMinutes;
   attendance.earlyLeaveMinutes = earlyLeaveMinutes;
   attendance.exceptionEventsCounted = exceptionEventsCounted;
@@ -435,12 +472,10 @@ async function evaluateAttendanceRecord(attendance, context = null) {
   // lateness-only LOP does not falsely turn a present punch into HALF_DAY.
   attendance.status = status;
   attendance.deductionReason = reasons.join('; ');
-  attendance.evaluatedAt = new Date();
-  attendance.policySnapshot = policy.toObject();
-  return attendance.save();
+  return saveIfChanged(attendance, policy);
 }
 
-async function evaluateMonth({ tenantId, employeeIds, month }) {
+async function evaluateMonth({ tenantId, employeeIds, month, filter = null, returnAll = false }) {
   const { from, to } = monthRange(month);
   const q = { tenantId, date: { $gte: from, $lte: to } };
   if (employeeIds?.length) q.employeeId = { $in: employeeIds };
@@ -455,7 +490,7 @@ async function evaluateMonth({ tenantId, employeeIds, month }) {
       employeeId: { $in: ids },
       fromDate: { $lte: to },
       $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: from } }]
-    }).populate('shiftId').sort('fromDate'),
+    }).populate('shiftId').sort('fromDate createdAt'),
     PermissionRequest.find({
       tenantId,
       employeeId: { $in: ids },
@@ -517,9 +552,14 @@ async function evaluateMonth({ tenantId, employeeIds, month }) {
   };
 
   const evaluated = [];
+  const all = [];
   for (const row of rows) {
-    const result = await evaluateAttendanceRecord(row, context);
-    evaluated.push(result);
+    // A skipped row (an open punch the calendar leaves alone) still counts its
+    // stored late/early events, so the days after it read the right quota.
+    const skip = Boolean(filter && !filter(row));
+    const result = skip ? row : await evaluateAttendanceRecord(row, context);
+    if (!skip) evaluated.push(result);
+    all.push(result);
     const key = employeeKey(result.employeeId);
     if (result.graceUsed) {
       context.graceCountsByEmployee.set(key, (context.graceCountsByEmployee.get(key) || 0) + 1);
@@ -530,7 +570,7 @@ async function evaluateMonth({ tenantId, employeeIds, month }) {
     const exceptionEvents = Number(result.exceptionEventsCounted || 0);
     if (exceptionEvents) context.exceptionCountsByEmployee.set(key, (context.exceptionCountsByEmployee.get(key) || 0) + exceptionEvents);
   }
-  return evaluated;
+  return returnAll ? all : evaluated;
 }
 
 module.exports = {

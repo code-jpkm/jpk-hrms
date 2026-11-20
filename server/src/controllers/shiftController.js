@@ -7,6 +7,7 @@ const { getScopedEmployeeIds } = require('../services/scopeService');
 const { parseTimeToMinutes } = require('../utils/shift');
 const { rebuildAttendanceForEmployees } = require('../services/attendanceReprocessService');
 const { evaluateAttendanceRecord } = require('../services/attendanceRulesService');
+const { syncPayrollAfterChange } = require('../services/payrollSlipService');
 const Attendance = require('../models/Attendance');
 const { startOfDay, endOfDay, dateKey, companyToday } = require('../utils/date');
 
@@ -123,7 +124,14 @@ exports.assign = asyncHandler(async (req, res) => {
       reevaluatedStoredAttendance += 1;
     }
   }
-  res.status(201).json({ count: assignments.length, employeeCount: employees.length, matchedDates: dates.length, assignments, reprocess, reevaluatedStoredAttendance, message: `Shift assignment saved. ${reevaluatedStoredAttendance} stored attendance record(s) recalculated.` });
+  // A payroll draft for the months touched follows the recalculated days.
+  let payroll = [];
+  if (reevaluatedStoredAttendance) {
+    const months = [];
+    for (let d = new Date(`${String(fromDate).slice(0, 7)}-01T00:00:00.000Z`); dateKey(d) <= String(toDate).slice(0, 10) && months.length < 12; d.setUTCMonth(d.getUTCMonth() + 1)) months.push(dateKey(d).slice(0, 7));
+    payroll = (await syncPayrollAfterChange(req, { employeeIds: employees.map((emp) => emp._id), months })).payroll;
+  }
+  res.status(201).json({ payroll, count: assignments.length, employeeCount: employees.length, matchedDates: dates.length, assignments, reprocess, reevaluatedStoredAttendance, message: `Shift assignment saved. ${reevaluatedStoredAttendance} stored attendance record(s) recalculated.` });
 });
 
 exports.reprocessAttendance = asyncHandler(async (req, res) => {
@@ -157,6 +165,6 @@ exports.assignments = asyncHandler(async (req, res) => {
     if (!allowed.includes(String(req.query.employeeId))) throw new ApiError(403, 'Shift is outside your scope');
     q.employeeId = req.query.employeeId;
   }
-  const assignments = await ShiftAssignment.find(q).populate('employeeId', 'employeeCode firstName lastName').populate('shiftId').sort('-fromDate');
+  const assignments = await ShiftAssignment.find(q).populate('employeeId', 'employeeCode firstName lastName').populate('shiftId').sort('-fromDate -createdAt');
   res.json({ assignments });
 });

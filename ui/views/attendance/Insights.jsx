@@ -25,7 +25,7 @@ function HoursChart({ days }) {
         const w = bw * 0.64;
         const isOff = ['WEEK_OFF', 'HOLIDAY'].includes(d.status) && !d.workedOnHoliday;
         let fill = '#1F3445';
-        if (d.lateMinutes > (d.shiftGraceMinutes || 0) || d.earlyLeaveMinutes > 0) fill = '#F38121';
+        if (Number(d.lateMinutes) > 0 || d.earlyLeaveMinutes > 0) fill = '#F38121';
         if (d.status === 'HALF_DAY') fill = '#F38121';
         if (d.status === 'IN_PROGRESS') fill = '#1F3445';
         return (
@@ -60,7 +60,8 @@ function ArrivalChart({ days }) {
       <line x1={P.l} x2={W - P.r} y1={y(start)} y2={y(start)} stroke="#1F3445" strokeDasharray="5 4" />
       {points.map(({ d, m }) => {
         const i = days.indexOf(d);
-        const late = m > start + grace;
+        // The server's figure already allows for the grace (10:14:59 on time, 10:15:00 late).
+        const late = d.status === 'IN_PROGRESS' ? m >= start + grace : Number(d.lateMinutes) > 0;
         return <circle key={d.date} cx={P.l + i * bw + bw / 2} cy={y(m)} r="6" fill={late ? '#F38121' : '#1F3445'} stroke="#FFFFFF" strokeWidth="2"><title>{`${d.date}: in at ${label(m)}`}</title></circle>;
       })}
       {days.map((d, i) => <text key={d.date} x={P.l + i * bw + bw / 2} y={H - 6} fontSize="11" textAnchor="middle" fill={d.isToday ? '#1F3445' : '#A2A1A6'}>{d.day}</text>)}
@@ -70,7 +71,9 @@ function ArrivalChart({ days }) {
 
 function Donut({ summary }) {
   const parts = [
-    ['PRESENT', summary.present - (summary.wfh || 0)],
+    // present includes WFH and the yellow "out time missing" days; show those apart.
+    ['PRESENT', summary.present - (summary.wfh || 0) - (summary.needsReview || 0)],
+    ['REVIEW', summary.needsReview || 0],
     ['WFH', summary.wfh || 0],
     ['HALF_DAY', summary.halfDays],
     ['LEAVE', summary.leaveDays],

@@ -146,7 +146,8 @@ export function MyMonth() {
       {s && (
         <>
           <div className="dash-legend four">
-            <div><i className="good" /><b>{s.present + (s.wfh || 0)}</b><span>Present</span></div>
+            {/* summary.present already includes WFH days */}
+            <div><i className="good" /><b>{s.present}</b><span>Present</span></div>
             <div><i className="warn" /><b>{s.lateDays}</b><span>Late</span></div>
             <div><i className="info" /><b>{s.leaveDays}</b><span>Leave</span></div>
             <div><i className="bad" /><b>{s.missingPunches}</b><span>Missed</span></div>

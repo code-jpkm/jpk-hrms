@@ -11,6 +11,8 @@ export const STATUS = {
   HOLIDAY: { label: 'Holiday', short: 'H', tone: 'holiday', dot: '#807F84', soft: '#F2F2F3' },
   WEEK_OFF: { label: 'Weekly off', short: 'WO', tone: 'off', dot: '#C5C4C8', soft: '#F7F7F8' },
   IN_PROGRESS: { label: 'On duty now', short: 'IN', tone: 'live', dot: '#1F3445', soft: '#EFF3F6' },
+  // Yellow: a punch is missing and HR / admin has not decided yet. No loss of pay meanwhile.
+  REVIEW: { label: 'Out time missing', short: '?', tone: 'review', dot: '#D9A400', soft: '#FFF6D6' },
   NOT_MARKED: { label: 'Not marked yet', short: '–', tone: 'pending', dot: '#A2A1A6', soft: '#F7F7F8' },
   UPCOMING: { label: 'Upcoming', short: '', tone: 'future', dot: '#E1E1E4', soft: '#FFFFFF' },
   NOT_JOINED: { label: 'Before joining', short: '', tone: 'future', dot: '#E1E1E4', soft: '#FFFFFF' }
@@ -39,7 +41,7 @@ export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function isIssue(day) {
   if (!day || ['HOLIDAY', 'WEEK_OFF', 'UPCOMING', 'NOT_JOINED', 'IN_PROGRESS'].includes(day.status)) return false;
-  return ['ABSENT', 'HALF_DAY'].includes(day.status) || day.missingPunch || day.lateMinutes > 0 || day.earlyLeaveMinutes > 0 || Number(day.lopDays) > 0;
+  return ['ABSENT', 'HALF_DAY', 'REVIEW'].includes(day.status) || day.needsReview || day.missingPunch || day.lateMinutes > 0 || day.earlyLeaveMinutes > 0 || Number(day.lopDays) > 0;
 }
 
 /** Download rows as a CSV file. */

@@ -13,6 +13,9 @@ router.post('/mobile-check-out', controller.mobileCheckOut);
 router.post('/import-biometric', requireAbility('ATTENDANCE', 'IMPORT', 'SUPER_ADMIN', 'HR_ADMIN'), controller.importBiometric);
 router.post('/override', requireAbility('ATTENDANCE', 'OVERRIDE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.overrideAttendance);
 router.post('/lop-override', requireAbility('ATTENDANCE', 'OVERRIDE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.overrideLop);
+// One change to one day from the calendar. Each action checks its own permission
+// (attendance override, shifts, leave approval, corrections) inside the service.
+router.post('/day-action', controller.dayAction);
 router.post('/evaluate-month', requireAbility('ATTENDANCE', 'EVALUATE', 'SUPER_ADMIN', 'HR_ADMIN', 'MANAGER'), controller.evaluateMonth);
 
 module.exports = router;

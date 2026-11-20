@@ -2078,3 +2078,6 @@ details.premium-collapsible[open]>summary em:before{content:"Close";font-size:13
 .workspace-tabs::-webkit-scrollbar{display:none}
 .workspace-tabs>button{flex:0 0 auto}
 .tree-row{flex-wrap:wrap}
+
+/* Payroll: days still waiting for an out-time decision */
+.payroll-review-note{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#FFFBEA;border:1px solid #F2D266;color:#5C4500;font-size:12.5px;font-weight:600;line-height:1.45}

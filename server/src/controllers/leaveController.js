@@ -13,6 +13,7 @@ const { getScopedEmployeeIds, descendantIds } = require('../services/scopeServic
 const { notifyLater, recipientsForRoles } = require('../services/messaging/dispatcher');
 const { getReportingManager, canApproveEmployee } = require('../services/approvalService');
 const { evaluateAttendanceRecord } = require('../services/attendanceRulesService');
+const { settleAttendanceChange, withPayrollNote } = require('../services/attendanceChangeService');
 const { notifyUser, notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
 
 function inclusiveDays(from, to, dayPart = 'FULL') {
@@ -310,10 +311,16 @@ exports.submitLeaveRequest = submitLeaveRequest;
 
 exports.apply = asyncHandler(async (req, res) => {
   const { request, autoApproved, appliedOnBehalf, label, name } = await submitLeaveRequest(req, req.body || {});
-  const message = autoApproved
+  let message = autoApproved
     ? (appliedOnBehalf ? `Approved. ${request.days} day(s) of ${label} recorded for ${name}.` : `Approved. ${request.days} day(s) of ${label} recorded.`)
     : 'Request sent for approval';
-  res.status(201).json({ request, autoApproved, message });
+  let payroll = [];
+  if (autoApproved) {
+    const settled = await settleAttendanceChange(req, { employeeIds: [request.employeeId], dates: [request.fromDate, request.toDate] });
+    payroll = settled.payroll;
+    message = withPayrollNote(message, settled.payrollNote);
+  }
+  res.status(201).json({ request, autoApproved, message, payroll });
 });
 
 exports.manualAdd = asyncHandler(async (req, res) => {
@@ -326,10 +333,13 @@ exports.manualAdd = asyncHandler(async (req, res) => {
   res.json({ balance: result.balance, grant: result.grant, remarks });
 });
 
-exports.decision = asyncHandler(async (req, res) => {
-  const { status, remarks } = req.body;
+/**
+ * Approve or reject a pending leave / WFH request. Used by the leave screen and
+ * by the attendance calendar, so both apply the same checks.
+ */
+async function decideLeaveRequest(req, id, { status, remarks } = {}) {
   if (!['APPROVED', 'REJECTED'].includes(status)) throw new ApiError(400, 'status must be APPROVED or REJECTED');
-  const request = await LeaveRequest.findOne({ _id: req.params.id, tenantId: req.tenantId }).populate('employeeId');
+  const request = await LeaveRequest.findOne({ _id: id, tenantId: req.tenantId }).populate('employeeId');
   if (!request) throw new ApiError(404, 'Leave request not found');
   const visible = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'LEAVE' });
   if (!visible.includes(String(request.employeeId?._id || request.employeeId))) throw new ApiError(403, 'Leave request is outside your Office / Factory scope');
@@ -370,7 +380,21 @@ exports.decision = asyncHandler(async (req, res) => {
       priority: status === 'REJECTED' ? 'HIGH' : 'NORMAL'
     }
   });
-  res.json({ request, message: `Request ${status.toLowerCase()}` });
+  return { request, message: `Request ${status.toLowerCase()}` };
+}
+
+exports.decideLeaveRequest = decideLeaveRequest;
+
+exports.decision = asyncHandler(async (req, res) => {
+  const { request, message } = await decideLeaveRequest(req, req.params.id, req.body || {});
+  let payroll = [];
+  let text = message;
+  if (request.status === 'APPROVED') {
+    const settled = await settleAttendanceChange(req, { employeeIds: [request.employeeId?._id || request.employeeId], dates: [request.fromDate, request.toDate] });
+    payroll = settled.payroll;
+    text = withPayrollNote(message, settled.payrollNote);
+  }
+  res.json({ request, message: text, payroll });
 });
 
 /**
@@ -437,5 +461,12 @@ exports.cancel = asyncHandler(async (req, res) => {
       inApp: { type: 'LEAVE_CANCELLED', title: `${request.requestType === 'WFH' ? 'WFH' : request.leaveType} cancelled`, body: request.decisionRemarks, entityType: 'LEAVE_REQUEST' }
     });
   }
-  res.json({ request, message: previous === 'APPROVED' ? 'Approved leave cancelled and balance restored' : 'Request withdrawn' });
+  let message = previous === 'APPROVED' ? 'Approved leave cancelled and balance restored' : 'Request withdrawn';
+  let payroll = [];
+  if (previous === 'APPROVED') {
+    const settled = await settleAttendanceChange(req, { employeeIds: [request.employeeId?._id || request.employeeId], dates: [request.fromDate, request.toDate] });
+    payroll = settled.payroll;
+    message = withPayrollNote(message, settled.payrollNote);
+  }
+  res.json({ request, message, payroll });
 });

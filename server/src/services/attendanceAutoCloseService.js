@@ -36,7 +36,7 @@ async function shiftWindowFor({ tenantId, employeeId, date, offset }) {
     employeeId,
     fromDate: { $lte: date },
     $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: date } }]
-  }).populate('shiftId').sort('-fromDate');
+  }).populate('shiftId').sort('-fromDate -createdAt');
   if (!assignment?.shiftId) return null;
   return computeShiftWindow(assignment.shiftId, date, offset);
 }
@@ -109,6 +109,14 @@ async function autoCloseStalePunches({ tenantId, employeeId = null, now = new Da
     const note = 'No check-out recorded; duty day closed automatically. Regularize to set the correct out time.';
     record.deductionReason = record.deductionReason ? `${record.deductionReason} · ${note}` : note;
     await record.save();
+    // Settle the day at once: it turns yellow ("out time missing") with no loss
+    // of pay until HR / admin decides, instead of waiting for the next recalculation.
+    try {
+      const { evaluateAttendanceRecord } = require('./attendanceRulesService');
+      await evaluateAttendanceRecord(record);
+    } catch (error) {
+      console.warn(`[autoClose] could not re-evaluate ${record._id}: ${error.message}`);
+    }
     closed.push(record._id);
   }
 

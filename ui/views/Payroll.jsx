@@ -80,6 +80,11 @@ export default function Payroll() {
   const autoPtax = payRule.ptax?.enabled === false || salaryEmployee?.statutory?.ptaxApplicable === false ? 0 : Number((payRule.ptax?.slabs || []).find((x)=>salaryGross >= Number(x.from||0) && salaryGross <= Number(x.to||Number.MAX_SAFE_INTEGER))?.amount ?? payRule.ptax?.defaultAmount ?? 0);
   const autoNet = salaryGross - autoPf - autoEsi - autoPtax - Number(salaryMaster.deductions.otherDeductions || 0);
   const currentRun = useMemo(() => (runs?.runs || []).find((r) => r.month === month), [runs, month]);
+  // Days with a missing out time are paid as present until HR decides them on the attendance calendar.
+  const waiting = useMemo(() => {
+    const rows = (slips?.slips || []).filter((s) => Number(s.attendanceStats?.reviewDays || 0) > 0);
+    return { people: rows.length, days: rows.reduce((t, s) => t + Number(s.attendanceStats.reviewDays || 0), 0) };
+  }, [slips]);
   const finalizedRuns = useMemo(() => (runs?.runs || []).filter((r) => r.status === 'FINALIZED'), [runs]);
   const releasedRun = useMemo(() => finalizedRuns.find((r) => r.month === releasedMonth), [finalizedRuns, releasedMonth]);
   const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -145,7 +150,8 @@ export default function Payroll() {
 
   async function releasePayroll() {
     if (!currentRun?._id) return;
-    if (!window.confirm(`Release payroll for ${currentRun.month}? Employees will be notified.`)) return;
+    const pending = waiting.days ? `\n\n${waiting.people} employee(s) still have ${waiting.days} day(s) with a missing out time. They are paid as present unless you decide them on the attendance calendar first.` : '';
+    if (!window.confirm(`Release payroll for ${currentRun.month}? Employees will be notified.${pending}`)) return;
     setError(null); setMessage('');
     try {
       await post(`/payroll/runs/${currentRun._id}/release`, { reason: `Payroll ${currentRun.month} approved for release` }, { loadingMessage: `Releasing ${currentRun.month} payroll…`, successMessage: `Payroll ${currentRun.month} released` });
@@ -245,7 +251,7 @@ export default function Payroll() {
       <ErrorBox error={error || runsError || slipsError || templateError || rulesError || employeesError || salaryMastersError} />
 
       <div className="payroll-top-grid">
-        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}</div></section>
+        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}</div>{canReadPayrollAdmin&&currentRun?.status==='DRAFT'&&waiting.days>0&&<p className="payroll-review-note">{waiting.people} employee{waiting.people===1?'':'s'} {waiting.people===1?'has':'have'} {waiting.days} day{waiting.days===1?'':'s'} with a missing out time (yellow on the attendance calendar). They are paid as present until decided; deciding a day there updates this draft at once.</p>}</section>
 
         {canReadPayrollAdmin && <section className="premium-section-card released-payroll-card"><div className="premium-section-head"><div><small>RELEASED PAYROLL</small><h2>View a released month</h2><p>No salary amount is shown until a released month is selected.</p></div></div><Field label="Released month"><select value={releasedMonth} onChange={(e)=>setReleasedMonth(e.target.value)}><option value="">Select released payroll</option>{finalizedRuns.map((r)=><option key={r._id} value={r.month}>{r.month}</option>)}</select></Field>{releasedRun ? <div className="released-payroll-summary"><div><span>Net payout</span><b>{money(releasedRun.summary?.netTotal)}</b></div><div><span>Gross</span><b>{money(releasedRun.summary?.grossTotal)}</b></div><div><span>Deductions</span><b>{money(releasedRun.summary?.deductionTotal)}</b></div><div><span>Employees</span><b>{releasedRun.summary?.employeeCount||0}</b></div><div className="released-payroll-actions"><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'csv')}>Download CSV</button><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'pdf')}>Download PDF</button></div></div> : <div className="payroll-locked-placeholder"><span>◉</span><div><b>Amounts hidden</b><small>Select a released month above to reveal totals.</small></div></div>}</section>}
       </div>

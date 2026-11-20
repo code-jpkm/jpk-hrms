@@ -33,6 +33,10 @@ const attendanceSchema = new mongoose.Schema({
   autoClosed: { type: Boolean, default: false },
   autoClosedAt: Date,
   missingCheckOut: { type: Boolean, default: false },
+  // A past duty day with only one punch (usually the out time is missing). It is
+  // never loss of pay on its own: the calendar shows it in yellow until HR /
+  // admin decides (set the time, or count it present / half day / absent).
+  needsReview: { type: Boolean, default: false },
   lopDays: { type: Number, default: 0 },
   lopOverride: {
     enabled: { type: Boolean, default: false },

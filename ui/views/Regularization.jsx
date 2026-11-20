@@ -6,6 +6,7 @@ import { useApi } from '../hooks/useApi.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { canApplyOnBehalf, hasAbility } from '../utils/permissions.js';
 import { statusMeta } from './attendance/meta.js';
+import { DateTimeField, addDaysToKey } from '../components/DateTimePicker.jsx';
 import '../styles/attendance.css';
 
 const CLOSED = new Set(['HOLIDAY', 'WEEK_OFF', 'UPCOMING']);
@@ -128,8 +129,9 @@ export default function Regularization() {
       <form className="drawer-form" onSubmit={apply}>
         <Field label="What needs fixing?"><select value={form.requestType} onChange={(e)=>setForm({...form,requestType:e.target.value})}><option value="ATTENDANCE_CORRECTION">Wrong or missing punch time</option><option value="LATE_IN">Permission for late arrival</option><option value="EARLY_LEAVE">Permission to leave early</option><option value="MEDICAL">Medical exception</option><option value="SPECIAL">Special permission</option></select></Field>
         {form.requestType==='ATTENDANCE_CORRECTION' ? <>
-          <Field label="Correct check-in"><input type="datetime-local" value={form.requestedCheckIn} onChange={(e)=>setForm({...form,requestedCheckIn:e.target.value})}/></Field>
-          <Field label="Correct check-out"><input type="datetime-local" value={form.requestedCheckOut} onChange={(e)=>setForm({...form,requestedCheckOut:e.target.value})}/></Field>
+          {/* Calendar for the date, clock for the time: nothing to type. */}
+          <DateTimeField label="Correct check-in" value={form.requestedCheckIn} onChange={(v)=>setForm({...form,requestedCheckIn:v})} minDate={addDaysToKey(selected.date,-1)} maxDate={selected.date} defaultDate={selected.date} defaultTime={selected.shiftStart || '09:30'} timeSuggestions={selected.shiftStart ? [{ label: 'Shift start', value: selected.shiftStart }] : []} clearable />
+          <DateTimeField label="Correct check-out" value={form.requestedCheckOut} onChange={(v)=>setForm({...form,requestedCheckOut:v})} minDate={selected.date} maxDate={addDaysToKey(selected.date,1)} defaultDate={selected.date} defaultTime={selected.shiftEnd || '18:30'} timeSuggestions={selected.shiftEnd ? [{ label: 'Shift end', value: selected.shiftEnd }] : []} clearable />
         </> : <>
           <div className="permission-explainer"><b>No punch will be rewritten.</b><span>This approval is evaluated by the attendance rule engine against the employee's actual punches and monthly permission allowance.</span></div>
           <Field label="Permission minutes"><input type="number" min="0" value={form.requestedMinutes} onChange={(e)=>setForm({...form,requestedMinutes:Number(e.target.value)})}/></Field>

@@ -89,7 +89,7 @@ async function findActiveShiftAssignment({ tenantId, employeeId, at, timezoneOff
     employeeId,
     fromDate: { $lte: date },
     $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: date } }]
-  }).populate('shiftId').sort('-fromDate');
+  }).populate('shiftId').sort('-fromDate -createdAt');
 }
 
 async function resolveAttendanceDateForPunch({ tenantId, employeeId, timestamp, timezoneOffsetMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES }) {
@@ -103,7 +103,7 @@ async function resolveAttendanceDateForPunch({ tenantId, employeeId, timestamp, 
       employeeId,
       fromDate: { $lte: candidate },
       $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: candidate } }]
-    }).populate('shiftId').sort('-fromDate');
+    }).populate('shiftId').sort('-fromDate -createdAt');
     const shift = assignment?.shiftId;
     if (!shift) continue;
     const window = computeShiftWindow(shift, candidate, timezoneOffsetMinutes);
@@ -168,15 +168,49 @@ function statusFromWorkedMinutes(shift, checkIn, checkOut, defaultStatus = 'PRES
  * impossible, so we surface it as a flagged anomaly (0 penalty) instead of
  * quietly charging the employee half a day.
  */
-function measureAgainstWindow({ window, checkIn, checkOut }) {
+const MINUTE_MS = 60000;
+
+/**
+ * The grace that applies: the larger of the company policy's late grace and
+ * the shift's own grace, so neither setting is ever silently ignored.
+ */
+function effectiveGraceMinutes(policy, shift) {
+  return Math.max(0, Number(policy?.lateGraceMinutes || 0), Number(shift?.graceMinutes || 0));
+}
+
+/**
+ * Whole minutes late, or 0 while still inside the grace. With a 10:00 start and
+ * 15 minutes grace, 10:14:59 is on time and 10:15:00 is the first late second.
+ * Seconds never round up into a late minute.
+ */
+function lateMinutesAfterGrace(start, checkIn, graceMinutes = 0) {
+  if (!start || !checkIn) return 0;
+  const lateMs = new Date(checkIn).getTime() - new Date(start).getTime();
+  if (!(lateMs > 0)) return 0;
+  if (lateMs < Math.max(0, Number(graceMinutes || 0)) * MINUTE_MS) return 0;
+  return Math.floor(lateMs / MINUTE_MS);
+}
+
+/** Whole minutes left early, or 0 within the tolerance (leaving 17:45:00 with 15 min tolerance is fine). */
+function earlyMinutesAfterTolerance(end, checkOut, toleranceMinutes = 0) {
+  if (!end || !checkOut) return 0;
+  const earlyMs = new Date(end).getTime() - new Date(checkOut).getTime();
+  if (!(earlyMs > 0)) return 0;
+  if (earlyMs <= Math.max(0, Number(toleranceMinutes || 0)) * MINUTE_MS) return 0;
+  return Math.floor(earlyMs / MINUTE_MS);
+}
+
+function measureAgainstWindow({ window, checkIn, checkOut, graceMinutes = 0, earlyToleranceMinutes = 0 }) {
   const duration = Number(window?.durationMinutes || 0);
   const rawLate = Math.max(0, minutesBetween(window.start, checkIn));
   const rawEarly = Math.max(0, minutesBetween(checkOut, window.end));
   const worked = minutesBetween(checkIn, checkOut);
   const anomalies = [];
 
-  let lateMinutes = rawLate;
-  let earlyLeaveMinutes = rawEarly;
+  // Grace and early tolerance decide whether a minute counts at all.
+  let lateMinutes = lateMinutesAfterGrace(window.start, checkIn, graceMinutes);
+  let earlyLeaveMinutes = earlyMinutesAfterTolerance(window.end, checkOut, earlyToleranceMinutes);
+  const withinGrace = rawLate > 0 && lateMinutes === 0;
 
   if (duration > 0 && rawEarly > duration) {
     anomalies.push(`Early leave of ${rawEarly}m exceeds the ${duration}m shift; treating as 0 and flagging for review`);
@@ -186,16 +220,19 @@ function measureAgainstWindow({ window, checkIn, checkOut }) {
     anomalies.push(`Late-in of ${rawLate}m exceeds the ${duration}m shift; treating as 0 and flagging for review`);
     lateMinutes = 0;
   }
-  if (duration > 0 && worked > 0 && rawEarly > 0 && worked + rawLate >= duration) {
+  if (duration > 0 && worked > 0 && earlyLeaveMinutes > 0 && worked + rawLate >= duration) {
     // Worked the full window once lateness is accounted for: there is no early leave.
     anomalies.push(`Worked ${worked}m covers the full ${duration}m window; early-leave of ${rawEarly}m discarded as a clock-offset artefact`);
     earlyLeaveMinutes = 0;
   }
 
-  return { lateMinutes, earlyLeaveMinutes, workedMinutes: worked, rawLate, rawEarly, anomalies };
+  return { lateMinutes, earlyLeaveMinutes, workedMinutes: worked, rawLate, rawEarly, withinGrace, anomalies };
 }
 
 module.exports = {
+  effectiveGraceMinutes,
+  lateMinutesAfterGrace,
+  earlyMinutesAfterTolerance,
   DEFAULT_TIMEZONE_OFFSET_MINUTES,
   resolveTimezoneOffset,
   measureAgainstWindow,

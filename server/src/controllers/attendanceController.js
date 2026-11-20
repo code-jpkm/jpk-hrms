@@ -10,9 +10,14 @@ const { findAllowedSite } = require('../utils/geo');
 const { getScopedEmployeeIds } = require('../services/scopeService');
 const { importBiometricLogs } = require('../services/biometricService');
 const { evaluateAttendanceRecord, evaluateMonth, getPolicy } = require('../services/attendanceRulesService');
-const { resolveAttendanceDateForPunch, computeShiftWindow, minutesBetween, resolveTimezoneOffset } = require('../utils/shift');
+const { resolveAttendanceDateForPunch, computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace } = require('../utils/shift');
 const { autoCloseStalePunches, isStillOpenForCheckout, punchMessage } = require('../services/attendanceAutoCloseService');
 const { buildCalendar } = require('../services/attendanceCalendarService');
+const { runDayAction } = require('../services/attendanceDayActionService');
+const { settleAttendanceChange, withPayrollNote } = require('../services/attendanceChangeService');
+const { syncPayrollAfterChange } = require('../services/payrollSlipService');
+const PayrollRun = require('../models/PayrollRun');
+const { hasAbility } = require('../middleware/auth');
 const RuleAudit = require('../models/RuleAudit');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
@@ -72,7 +77,19 @@ exports.calendar = asyncHandler(async (req, res) => {
   if (!employeeId) throw new ApiError(400, 'employeeId is required');
   const allowedIds = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'ATTENDANCE' });
   if (!allowedIds.includes(String(employeeId))) throw new ApiError(403, 'Attendance calendar is outside your scope');
-  res.json(await buildCalendar({ tenantId: req.tenantId, employeeId, month: req.query.month }));
+  const calendar = await buildCalendar({ tenantId: req.tenantId, employeeId, month: req.query.month });
+  // People who can change attendance see whether the month's payroll is a draft
+  // (it follows their changes) or already released (it does not).
+  if (['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role) || hasAbility(req.user, 'ATTENDANCE', 'OVERRIDE')) {
+    const run = await PayrollRun.findOne({ tenantId: req.tenantId, month: calendar.month }).select('status').lean();
+    calendar.payroll = { status: run?.status || null };
+  }
+  res.json(calendar);
+});
+
+/** POST /api/attendance/day-action — one change to one day, from the calendar. */
+exports.dayAction = asyncHandler(async (req, res) => {
+  res.json(await runDayAction(req, req.body || {}));
 });
 
 /**
@@ -94,7 +111,7 @@ exports.teamToday = asyncHandler(async (req, res) => {
   const [rows, leaves, assignments, defaultShift, holidays] = await Promise.all([
     Attendance.find({ tenantId: req.tenantId, employeeId: { $in: ids }, date: day }).lean(),
     LeaveRequest.find({ tenantId: req.tenantId, employeeId: { $in: ids }, status: 'APPROVED', fromDate: { $lte: endOfDay(day) }, toDate: { $gte: day } }).select('employeeId requestType leaveType dayPart').lean(),
-    ShiftAssignment.find({ tenantId: req.tenantId, employeeId: { $in: ids }, fromDate: { $lte: day }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }] }).populate('shiftId').sort('fromDate').lean(),
+    ShiftAssignment.find({ tenantId: req.tenantId, employeeId: { $in: ids }, fromDate: { $lte: day }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }] }).populate('shiftId').sort('fromDate createdAt').lean(),
     Shift.findOne({ tenantId: req.tenantId, active: true }).sort('createdAt').lean(),
     Holiday.find({ tenantId: req.tenantId, date: { $gte: new Date(day.getTime() - 86400000), $lte: new Date(day.getTime() + 86400000) } }).lean()
   ]);
@@ -122,9 +139,10 @@ exports.teamToday = asyncHandler(async (req, res) => {
     else if (weeklyOff) state = 'WEEK_OFF';
     else if (day < today) state = 'ABSENT';
     else if (day > today) state = 'UPCOMING';
-    else if (window && now < new Date(window.start.getTime() + Number(shift.graceMinutes || 0) * 60000)) state = 'NOT_YET';
+    else if (window && now < new Date(window.start.getTime() + effectiveGraceMinutes(policy, shift) * 60000)) state = 'NOT_YET';
     else state = 'MISSING';
-    const lateMinutes = r?.checkIn && window ? Math.max(0, minutesBetween(window.start, r.checkIn)) : 0;
+    // Same rule as payroll: inside the grace is on time (10:14:59 with a 10:00 start and 15 min).
+    const lateMinutes = r?.checkIn && window ? lateMinutesAfterGrace(window.start, r.checkIn, effectiveGraceMinutes(policy, shift)) : 0;
     return {
       employeeId: id,
       employeeCode: e.employeeCode,
@@ -136,7 +154,7 @@ exports.teamToday = asyncHandler(async (req, res) => {
       state,
       checkIn: r?.checkIn,
       checkOut: r?.checkOut,
-      lateMinutes: lateMinutes > Number(shift?.graceMinutes || 0) ? lateMinutes : 0,
+      lateMinutes,
       workedMinutes: r?.checkIn ? minutesBetween(r.checkIn, r.checkOut || (key === dateKey(today) ? now : r.checkIn)) : 0,
       source: r?.source || '',
       siteName: r?.location?.siteName || '',
@@ -322,17 +340,18 @@ exports.mobileState = asyncHandler(async (req, res) => {
     employeeId: context.employee._id,
     fromDate: { $lte: day },
     $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }]
-  }).populate('shiftId').sort('-fromDate');
+  }).populate('shiftId').sort('-fromDate -createdAt');
   const shift = assignment?.shiftId || await Shift.findOne({ tenantId: req.tenantId, active: true }).sort('createdAt');
   const window = shift ? computeShiftWindow(shift, day, offset) : null;
   const record = context.attendance;
-  const lateMinutes = record?.checkIn && window ? Math.max(0, minutesBetween(window.start, record.checkIn)) : 0;
+  const graceMinutes = shift ? effectiveGraceMinutes(policy, shift) : 0;
+  const lateMinutes = record?.checkIn && window ? lateMinutesAfterGrace(window.start, record.checkIn, graceMinutes) : 0;
   const workedMinutes = record?.checkIn ? minutesBetween(record.checkIn, record.checkOut || new Date()) : 0;
   const employee = context.employee;
   res.json({
-    shift: shift ? { name: shift.name, startTime: shift.startTime, endTime: shift.endTime, graceMinutes: shift.graceMinutes || 0, durationMinutes: window?.durationMinutes || 0, weeklyOffDays: shift.weeklyOffDays || [] } : null,
+    shift: shift ? { name: shift.name, startTime: shift.startTime, endTime: shift.endTime, graceMinutes, durationMinutes: window?.durationMinutes || 0, weeklyOffDays: shift.weeklyOffDays || [] } : null,
     window: window ? { start: window.start, end: window.end } : null,
-    lateMinutes: lateMinutes > Number(shift?.graceMinutes || 0) ? lateMinutes : 0,
+    lateMinutes,
     workedMinutes,
     mobile: {
       enabled: Boolean(employee.canUseAnywhereAttendance || employee.canUseGeofencing),
@@ -420,7 +439,8 @@ exports.overrideAttendance = asyncHandler(async (req, res) => {
     }
   });
   await RuleAudit.create({ tenantId: req.tenantId, module: 'ATTENDANCE', action: 'ATTENDANCE_OVERRIDE', targetId: String(attendance._id), after: attendance.toObject(), reason: remarks, changedBy: req.user._id });
-  res.json({ attendance });
+  const settled = await settleAttendanceChange(req, { employeeIds: [employeeId], dates: [attendance.date] });
+  res.json({ attendance, payroll: settled.payroll, message: withPayrollNote('Attendance corrected.', settled.payrollNote) });
 });
 
 exports.overrideLop = asyncHandler(async (req, res) => {
@@ -429,6 +449,11 @@ exports.overrideLop = asyncHandler(async (req, res) => {
   let attendance;
   if (attendanceId) attendance = await Attendance.findOne({ _id: attendanceId, tenantId: req.tenantId });
   else if (employeeId && date) attendance = await Attendance.findOne({ tenantId: req.tenantId, employeeId, date: startOfDay(date) });
+  // An absent day usually has no attendance row; it needs one to carry the LOP decision.
+  if (!attendance && employeeId && /^\d{4}-\d{2}-\d{2}/.test(String(date || ''))) {
+    const exists = await Employee.exists({ _id: employeeId, tenantId: req.tenantId });
+    if (exists) attendance = new Attendance({ tenantId: req.tenantId, employeeId, date: startOfDay(date), status: 'ABSENT', source: 'OVERRIDE', lopDays: 1 });
+  }
   if (!attendance) throw new ApiError(404, 'Attendance record not found');
   const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'ATTENDANCE' });
   if (!allowed.includes(String(attendance.employeeId))) throw new ApiError(403, 'Attendance record is outside your permitted Office / Factory scope');
@@ -441,7 +466,8 @@ exports.overrideLop = asyncHandler(async (req, res) => {
   attendance.overrideBy = req.user._id;
   await attendance.save();
   await RuleAudit.create({ tenantId: req.tenantId, module: 'ATTENDANCE', action: 'LOP_OVERRIDE', targetId: String(attendance._id), before, after: attendance.toObject(), reason, changedBy: req.user._id });
-  res.json({ attendance });
+  const settled = await settleAttendanceChange(req, { employeeIds: [attendance.employeeId], dates: [attendance.date] });
+  res.json({ attendance, payroll: settled.payroll, message: withPayrollNote('LOP updated.', settled.payrollNote) });
 });
 
 exports.evaluateMonth = asyncHandler(async (req, res) => {
@@ -449,5 +475,8 @@ exports.evaluateMonth = asyncHandler(async (req, res) => {
   if (!/^\d{4}-\d{2}$/.test(month || '')) throw new ApiError(400, 'month must be YYYY-MM');
   const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'ATTENDANCE' });
   const rows = await evaluateMonth({ tenantId: req.tenantId, employeeIds: allowed, month });
-  res.json({ evaluated: rows.length, attendance: rows });
+  // A payroll draft for the month follows the recalculation (a released month is left alone).
+  const evaluatedIds = Array.from(new Set(rows.map((row) => String(row.employeeId))));
+  const synced = await syncPayrollAfterChange(req, { employeeIds: evaluatedIds, months: [month] });
+  res.json({ evaluated: rows.length, attendance: rows, payroll: synced.payroll, message: withPayrollNote('Month recalculated with the latest rules.', synced.payrollNote) });
 });

@@ -14,8 +14,8 @@ function DayCell({ day, onOpen }) {
   const disabled = ['UPCOMING', 'NOT_JOINED'].includes(day.status) && !day.pendingLeave;
   const worked = Number(day.workedMinutes || 0);
   const shiftMinutes = Number(day.shiftMinutes || 480);
-  const grace = Number(day.shiftGraceMinutes || 0);
-  const late = Number(day.lateMinutes) > grace ? Number(day.lateMinutes) : 0;
+  // The server already leaves out arrivals inside the grace (10:14:59 on a 10:00 shift is on time).
+  const late = Number(day.lateMinutes) > 0 ? Number(day.lateMinutes) : 0;
   const overtime = worked > shiftMinutes + 30 ? worked - shiftMinutes : 0;
   const { code, tone } = codeFor(day);
   const classes = ['att-day', `t-${tone}`];
@@ -23,7 +23,8 @@ function DayCell({ day, onOpen }) {
   if (isIssue(day)) classes.push('has-issue');
 
   let caption = '';
-  if (day.status === 'HOLIDAY' || day.workedOnHoliday) caption = day.holidayName || 'Holiday';
+  if (day.status === 'REVIEW') caption = day.missingSide === 'IN' ? 'In time missing' : 'Out time missing';
+  else if (day.status === 'HOLIDAY' || day.workedOnHoliday) caption = day.holidayName || 'Holiday';
   else if (day.status === 'LEAVE') caption = LEAVE_NAMES[day.leaveType] || 'On leave';
   else if (day.status === 'WEEK_OFF') caption = 'Weekly off';
   else if (day.status === 'ABSENT' && !day.checkIn && !day.missingPunch) caption = 'No punch';
@@ -34,7 +35,8 @@ function DayCell({ day, onOpen }) {
   const notes = [];
   if (late > 0) notes.push({ k: 'late', t: `Late ${late}m` });
   if (Number(day.earlyLeaveMinutes) > 0) notes.push({ k: 'early', t: `Left ${day.earlyLeaveMinutes}m early` });
-  if (day.missingPunch) notes.push({ k: 'miss', t: 'Missing punch' });
+  if (day.status === 'REVIEW') notes.push({ k: 'review', t: 'Needs a decision' });
+  else if (day.missingPunch) notes.push({ k: 'miss', t: 'Missing punch' });
   if (Number(day.lopDays) > 0 && !['UPCOMING', 'NOT_JOINED'].includes(day.status)) notes.push({ k: 'lop', t: `${day.lopDays} LOP` });
   if (overtime > 0) notes.push({ k: 'ot', t: `+${durationLabel(overtime, { short: true })} extra` });
   if ((day.pendingRegularization || day.pendingLeave) && day.status !== 'UPCOMING') notes.push({ k: 'pending', t: 'Request pending' });
@@ -48,7 +50,7 @@ function DayCell({ day, onOpen }) {
         {code && <span className={`att-code c-${tone}`}>{code}</span>}
       </div>
       {(day.checkIn || day.checkOut) && (
-        <div className="att-times">{formatTime(day.checkIn)} – {day.checkOut ? formatTime(day.checkOut) : day.status === 'IN_PROGRESS' ? 'now' : '—'}</div>
+        <div className="att-times">{formatTime(day.checkIn)} – {day.checkOut ? formatTime(day.checkOut) : day.status === 'IN_PROGRESS' ? 'now' : day.status === 'REVIEW' ? '?' : '—'}</div>
       )}
       {caption && <div className="att-day-caption">{caption}</div>}
       {worked > 0 && !notes.length && <div className="att-day-hours">{durationLabel(worked, { short: true })}</div>}
@@ -64,7 +66,7 @@ function DayCell({ day, onOpen }) {
 export default function MonthCalendar({ days = [], loading, onOpen, showWfh }) {
   const blanks = days.length ? days[0].weekday : 0;
   const legend = [
-    ['PRESENT', 'Present'], ['ABSENT', 'Absent'], ['HALF_DAY', 'Half day'], ['LEAVE', 'Leave'],
+    ['PRESENT', 'Present'], ['ABSENT', 'Absent'], ['HALF_DAY', 'Half day'], ['REVIEW', 'Out time missing (no LOP yet)'], ['LEAVE', 'Leave'],
     ...(showWfh ? [['WFH', 'Work from home']] : []), ['HOLIDAY', 'Holiday'], ['WEEK_OFF', 'Weekly off']
   ];
   return (

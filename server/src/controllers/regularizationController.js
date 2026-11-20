@@ -12,6 +12,7 @@ const { canApproveEmployee, getReportingManager } = require('../services/approva
 const { notifyUser, notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
 const { notifyLater, recipientsForRoles } = require('../services/messaging/dispatcher');
 const { evaluateAttendanceRecord, getPolicy } = require('../services/attendanceRulesService');
+const { settleAttendanceChange, withPayrollNote } = require('../services/attendanceChangeService');
 
 async function resolveRequestEmployee(req, input = req.body || {}) {
   const { employeeId, employeeCode } = input;
@@ -53,7 +54,11 @@ async function applyApprovedRegularization(req, request) {
       regularizationId: request._id
     };
     if (request.requestedCheckIn) update.checkIn = request.requestedCheckIn;
-    if (request.requestedCheckOut) update.checkOut = request.requestedCheckOut;
+    if (request.requestedCheckOut) {
+      update.checkOut = request.requestedCheckOut;
+      // The out time is known now: the day no longer waits for a decision.
+      update.missingCheckOut = false;
+    }
     const attendance = await Attendance.findOneAndUpdate(
       { tenantId: req.tenantId, employeeId, date: startOfDay(request.date) },
       update,
@@ -221,10 +226,16 @@ exports.submitRegularization = submitRegularization;
 
 exports.apply = asyncHandler(async (req, res) => {
   const { request, autoApproved, appliedOnBehalf, employeeName } = await submitRegularization(req, req.body || {});
-  const message = autoApproved
+  let message = autoApproved
     ? (appliedOnBehalf ? `Approved. ${employeeName}'s attendance is updated.` : 'Approved. Your attendance is updated.')
     : 'Request sent for approval';
-  res.status(201).json({ request, unified: true, autoApproved, message });
+  let payroll = [];
+  if (autoApproved) {
+    const settled = await settleAttendanceChange(req, { employeeIds: [request.employeeId], dates: [request.date] });
+    payroll = settled.payroll;
+    message = withPayrollNote(message, settled.payrollNote);
+  }
+  res.status(201).json({ request, unified: true, autoApproved, message, payroll });
 });
 
 async function reevaluatePermissionDay({ req, employeeId, date }) {
@@ -233,11 +244,14 @@ async function reevaluatePermissionDay({ req, employeeId, date }) {
   return attendance;
 }
 
-exports.decision = asyncHandler(async (req, res) => {
-  const { status, remarks } = req.body;
+/**
+ * Approve or reject a pending correction / permission. Used by the requests
+ * screen and by the attendance calendar. Returns { request, message, employeeId, date, approved }.
+ */
+async function decideRegularization(req, id, { status, remarks } = {}) {
   if (!['APPROVED', 'REJECTED'].includes(status)) throw new ApiError(400, 'status must be APPROVED or REJECTED');
 
-  let request = await Regularization.findOne({ _id: req.params.id, tenantId: req.tenantId }).populate('employeeId');
+  let request = await Regularization.findOne({ _id: id, tenantId: req.tenantId }).populate('employeeId');
   if (request) {
     await assertDecisionAccess(req, request.employeeId);
     if (request.status !== 'PENDING') throw new ApiError(400, 'Request already decided');
@@ -264,12 +278,12 @@ exports.decision = asyncHandler(async (req, res) => {
         priority: status === 'REJECTED' ? 'HIGH' : 'NORMAL'
       }
     });
-    return res.json({ request: { ...request.toObject(), legacyPermission: false }, unified: true, message: `Attendance request ${status.toLowerCase()}` });
+    return { request: { ...request.toObject(), legacyPermission: false }, unified: true, message: `Attendance request ${status.toLowerCase()}`, employeeId: request.employeeId._id, date: request.date, approved: status === 'APPROVED' };
   }
 
   // Backward compatibility: old PermissionRequest records remain visible and
   // decidable inside the merged Regularization screen. No destructive migration is required.
-  const legacy = await PermissionRequest.findOne({ _id: req.params.id, tenantId: req.tenantId }).populate('employeeId');
+  const legacy = await PermissionRequest.findOne({ _id: id, tenantId: req.tenantId }).populate('employeeId');
   if (!legacy) throw new ApiError(404, 'Regularization / permission request not found');
   await assertDecisionAccess(req, legacy.employeeId);
   if (legacy.status !== 'PENDING') throw new ApiError(400, 'Request already decided');
@@ -292,5 +306,18 @@ exports.decision = asyncHandler(async (req, res) => {
     entityId: legacy._id,
     priority: status === 'REJECTED' ? 'HIGH' : 'NORMAL'
   });
-  res.json({ request: legacyPermissionToRegularization(legacy), unified: true, message: `Attendance permission ${status.toLowerCase()}` });
+  return { request: legacyPermissionToRegularization(legacy), unified: true, message: `Attendance permission ${status.toLowerCase()}`, employeeId: legacy.employeeId._id, date: legacy.date, approved: status === 'APPROVED' };
+}
+
+exports.decideRegularization = decideRegularization;
+
+exports.decision = asyncHandler(async (req, res) => {
+  const { employeeId, date, approved, ...result } = await decideRegularization(req, req.params.id, req.body || {});
+  let payroll = [];
+  if (approved) {
+    const settled = await settleAttendanceChange(req, { employeeIds: [employeeId], dates: [date] });
+    payroll = settled.payroll;
+    result.message = withPayrollNote(result.message, settled.payrollNote);
+  }
+  res.json({ ...result, payroll });
 });

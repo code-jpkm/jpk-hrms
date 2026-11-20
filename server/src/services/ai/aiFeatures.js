@@ -520,7 +520,8 @@ async function personalAttendanceInsights({ tenantId, user, employeeId, month })
   const cal = await buildCalendar({ tenantId, employeeId, month, selfHeal: false });
   const s = cal.summary;
   const name = `${cal.employee.firstName} ${cal.employee.lastName || ''}`.trim();
-  const exceptions = cal.days.filter((d) => !d.isFuture && (['ABSENT', 'HALF_DAY'].includes(d.status) || d.missingPunch || d.lateMinutes > (d.shiftGraceMinutes || 0) || d.earlyLeaveMinutes > 0 || d.lopDays > 0))
+  // lateMinutes already leaves out arrivals inside the grace.
+  const exceptions = cal.days.filter((d) => !d.isFuture && (['ABSENT', 'HALF_DAY', 'REVIEW'].includes(d.status) || d.missingPunch || d.lateMinutes > 0 || d.earlyLeaveMinutes > 0 || d.lopDays > 0))
     .slice(0, 20)
     .map((d) => ({ date: d.date, weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.weekday], status: d.status, lateMinutes: d.lateMinutes || 0, earlyLeaveMinutes: d.earlyLeaveMinutes || 0, missingPunch: d.missingPunch, lop: d.lopDays }));
   const facts = {
@@ -544,10 +545,10 @@ async function personalAttendanceInsights({ tenantId, user, employeeId, month })
   if (s.avgWorkedMinutes) highlights.push(`Average day on duty: ${Math.floor(s.avgWorkedMinutes / 60)}h ${String(s.avgWorkedMinutes % 60).padStart(2, '0')}m.`);
   const risks = [];
   if (s.lateDays) risks.push(`${s.lateDays} late arrival(s), ${s.lateMinutes} minutes in total.`);
-  if (s.missingPunches) risks.push(`${s.missingPunches} day(s) have only one punch and count as absent until corrected.`);
+  if (s.missingPunches) risks.push(`${s.missingPunches} day(s) have only one punch. They carry no loss of pay but wait for HR / admin to decide (set the time, or count the day present, half or absent).`);
   if (s.absent) risks.push(`${s.absent} absent day(s) without approved leave.`);
   const suggestions = [];
-  if (s.missingPunches) suggestions.push('Raise a regularization for each missing punch before payroll is generated.');
+  if (s.missingPunches) suggestions.push('Settle each yellow day on the attendance calendar (or send the real time as a correction) before payroll is generated.');
   if (s.absent) suggestions.push('Apply leave for absent days if leave balance is available, to avoid loss of pay.');
   if (s.lateDays >= 3) suggestions.push('The monthly late/early exception quota may be used up; further late arrivals attract 0.5 day LOP.');
   const fallback = {

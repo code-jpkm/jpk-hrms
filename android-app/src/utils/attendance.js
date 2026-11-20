@@ -8,6 +8,8 @@ export const STATUS = {
   HOLIDAY: { label: 'Holiday', short: 'H', dot: '#807F84', bg: '#E1E1E4', fg: '#3D3D41' },
   WEEK_OFF: { label: 'Weekly off', short: 'WO', dot: '#C5C4C8', bg: '#FFFFFF', fg: '#807F84', border: '#E1E1E4' },
   IN_PROGRESS: { label: 'On duty now', short: 'IN', dot: '#1F3445', bg: '#EFF3F6', fg: '#1F3445' },
+  // Yellow: a punch is missing and HR has not decided yet. No loss of pay meanwhile.
+  REVIEW: { label: 'Out time missing', short: '?', dot: '#D9A400', bg: '#FFF1B8', fg: '#7A5B00', border: '#F2D266' },
   NOT_MARKED: { label: 'Not marked yet', short: '–', dot: '#A2A1A6', bg: '#F7F7F8', fg: '#6A6A6F' },
   UPCOMING: { label: 'Upcoming', short: '', dot: '#E1E1E4', bg: '#FFFFFF', fg: '#A2A1A6' },
   NOT_JOINED: { label: 'Before joining', short: '', dot: '#E1E1E4', bg: '#FFFFFF', fg: '#A2A1A6' }
@@ -50,5 +52,5 @@ export function correctionLabel(type) {
 
 export function isIssue(day) {
   if (!day || ['HOLIDAY', 'WEEK_OFF', 'UPCOMING', 'NOT_JOINED', 'IN_PROGRESS'].includes(day.status)) return false;
-  return ['ABSENT', 'HALF_DAY'].includes(day.status) || day.missingPunch || day.lateMinutes > 0 || day.earlyLeaveMinutes > 0 || Number(day.lopDays) > 0;
+  return ['ABSENT', 'HALF_DAY', 'REVIEW'].includes(day.status) || day.needsReview || day.missingPunch || day.lateMinutes > 0 || day.earlyLeaveMinutes > 0 || Number(day.lopDays) > 0;
 }

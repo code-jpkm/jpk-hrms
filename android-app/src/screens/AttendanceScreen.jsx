@@ -81,7 +81,7 @@ export default function AttendanceScreen({ navigation }) {
               <View key={i} style={styles.weekRow}>{row.map((d, j) => <DayCell key={d?.date || `e${j}`} day={d} today={today} onPress={setOpen} />)}</View>
             ))}
             <View style={styles.legend}>
-              {['PRESENT', 'ABSENT', 'HALF_DAY', 'LEAVE', 'HOLIDAY', 'WEEK_OFF'].map((k) => (
+              {['PRESENT', 'ABSENT', 'HALF_DAY', 'REVIEW', 'LEAVE', 'HOLIDAY', 'WEEK_OFF'].map((k) => (
                 <View key={k} style={styles.legendItem}><Code status={k} small /><T v="small">{statusMeta(k).label}</T></View>
               ))}
             </View>
@@ -126,7 +126,9 @@ export default function AttendanceScreen({ navigation }) {
             </View>
             {open.lateMinutes > 0 && <Notice>Late by {formatMinutes(open.lateMinutes)}.</Notice>}
             {open.earlyLeaveMinutes > 0 && <Notice>Left {formatMinutes(open.earlyLeaveMinutes)} early.</Notice>}
-            {open.missingPunch && <Notice>A check-in or check-out is missing for this day.</Notice>}
+            {open.status === 'REVIEW'
+              ? <Notice>{open.missingSide === 'IN' ? 'Your in time' : 'Your out time'} was not recorded. HR will decide this day; until then there is no loss of pay. If you know the time, send it as a correction.</Notice>
+              : open.missingPunch && <Notice>A check-in or check-out is missing for this day.</Notice>}
             {!!open.progressLabel && <T v="small">{open.progressLabel}</T>}
           </View>
         )}

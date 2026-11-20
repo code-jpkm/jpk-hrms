@@ -15,6 +15,7 @@ const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, hol
 const { calculateSalary, calculateStatutoryDeductions, roundMoney } = require('../utils/salary');
 const { readWorkbookRows, workbookBuffer } = require('../utils/excel');
 const { getActiveSalaryMastersMap } = require('../services/salaryMasterService');
+const { buildSlip } = require('../services/payrollSlipService');
 const { evaluateMonth } = require('../services/attendanceRulesService');
 const { getScopedEmployeeIds } = require('../services/scopeService');
 const { writePayslipPdfToStream, payslipPdfBuffer, getActivePayslipTemplate } = require('../services/payslipPdfService');
@@ -23,130 +24,6 @@ const { randomToken, hashToken } = require('../utils/security');
 const env = require('../config/env');
 const { hasAbility } = require('../middleware/auth');
 const { notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
-
-async function attendanceStatsFor(employee, month, tenantId) {
-  const { from, to } = monthRange(month);
-  const today = companyToday();
-  const allDates = eachDate(from, to);
-  // v26: holidayDateKey was used here without being imported, so payroll for ANY
-  // month containing a holiday crashed with "holidayDateKey is not defined".
-  // The query is widened by a day because legacy rows were saved at IST midnight
-  // (18:30Z the previous UTC day) and a holiday on the 1st fell outside the range.
-  const holidays = await Holiday.find({ tenantId, date: { $gte: new Date(from.getTime() - 86400000), $lte: new Date(to.getTime() + 86400000) } });
-  const monthPrefix = month.slice(0, 7);
-  // An OFFICE-only holiday is a working day at the plant (and vice versa).
-  const holidayKeys = new Set(holidays
-    .filter((h) => !h.optional && holidayAppliesTo(h, employee.workLocation))
-    .map((h) => holidayDateKey(h))
-    .filter((key) => key.startsWith(monthPrefix)));
-  const assignments = await ShiftAssignment.find({
-    tenantId,
-    employeeId: employee._id,
-    fromDate: { $lte: to },
-    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: from } }]
-  }).populate('shiftId').sort('fromDate');
-  const joinDate = employee.dateOfJoining ? startOfDay(employee.dateOfJoining) : null;
-
-  function shiftForDay(day) {
-    return [...assignments].reverse().find((assignment) => {
-      const assignmentFrom = assignment.fromDate ? startOfDay(assignment.fromDate) : from;
-      const assignmentTo = assignment.toDate ? endOfDay(assignment.toDate) : to;
-      return day >= assignmentFrom && day <= assignmentTo;
-    })?.shiftId;
-  }
-
-  const workingDates = allDates.filter((d) => {
-    const day = startOfDay(d);
-    const key = dateKey(day);
-    if (joinDate && day < joinDate) return false;
-    // WAGES rule: payable working-day denominator is calendar days less Sundays.
-    // Holidays and shift templates do not silently reduce that statutory wage denominator.
-    if (employee.employeeCategory === 'WAGES') return day.getDay() !== 0;
-    if (holidayKeys.has(key)) return false;
-    const shift = shiftForDay(day);
-    const weeklyOffDays = Array.isArray(shift?.weeklyOffDays) ? shift.weeklyOffDays : [0];
-    return !weeklyOffDays.includes(day.getDay());
-  });
-
-  const attendance = await Attendance.find({
-    tenantId,
-    employeeId: employee._id,
-    date: { $gte: from, $lte: to }
-  });
-  const byDate = new Map(attendance.map((a) => [dateKey(a.date), a]));
-
-  let totalLopDays = 0;
-  let presentDays = 0;
-  let halfDays = 0;
-  let wfhDays = 0;
-  let leaveDays = 0;
-  let absentDays = 0;
-  let missingAbsentDays = 0;
-  let lateCount = 0;
-  let earlyLeaveCount = 0;
-  let scheduledFutureDays = 0;
-
-  for (const date of workingDates) {
-    const day = startOfDay(date);
-    const key = dateKey(day);
-    const record = byDate.get(key);
-
-    // Future duty dates are planned workdays, not absences. For the current month,
-    // today is also treated as pending unless attendance is already completed or a
-    // protected paid status has been recorded.
-    if (day > today) {
-      scheduledFutureDays += 1;
-      continue;
-    }
-    if (day.getTime() === today.getTime() && (!record || (record.checkIn && !record.checkOut))) {
-      scheduledFutureDays += 1;
-      continue;
-    }
-
-    if (!record) {
-      absentDays += 1;
-      missingAbsentDays += 1;
-      totalLopDays += 1;
-      continue;
-    }
-
-    lateCount += Number(record.lateMinutes || 0) > 0 ? 1 : 0;
-    earlyLeaveCount += Number(record.earlyLeaveMinutes || 0) > 0 ? 1 : 0;
-
-    const explicitLop = Math.max(0, Number(record.lopDays || 0));
-    if (record.status === 'ABSENT') {
-      absentDays += 1;
-      totalLopDays += Math.max(1, explicitLop);
-    } else if (record.status === 'HALF_DAY') {
-      halfDays += 1;
-      totalLopDays += Math.max(0.5, explicitLop);
-    } else {
-      if (record.status === 'PRESENT') presentDays += 1;
-      if (record.status === 'WFH') wfhDays += 1;
-      if (record.status === 'LEAVE') leaveDays += record.dayPart === 'FULL' ? 1 : 0.5;
-      totalLopDays += explicitLop;
-    }
-  }
-
-  const workingDays = workingDates.length;
-  const attendanceLopDays = Math.min(Math.max(totalLopDays, 0), workingDays);
-  const payableDays = Math.max(0, workingDays - attendanceLopDays);
-
-  return {
-    workingDays,
-    payableDays,
-    presentDays,
-    halfDays,
-    wfhDays,
-    leaveDays,
-    attendanceLopDays,
-    lateCount,
-    earlyLeaveCount,
-    absentDays,
-    missingAbsentDays,
-    scheduledFutureDays
-  };
-}
 
 function csvEscape(value) {
   const text = value === undefined || value === null ? '' : String(value);
@@ -501,19 +378,15 @@ exports.runPayroll = asyncHandler(async (req, res) => {
   const slips = [];
   const salaryMasterMap = await getActiveSalaryMastersMap({ tenantId: req.tenantId, employeeIds: employees.map((e) => e._id), month });
   for (const employee of employees) {
-    const stats = await attendanceStatsFor(employee, month, req.tenantId);
-    const salaryMaster = salaryMasterMap.get(String(employee._id));
-    const calc = calculateSalary({ employee, attendanceStats: stats, rule, salaryMaster });
-    const earnings = { basic: calc.basic, hra: calc.hra, conveyance: calc.conveyance, specialAllowance: calc.specialAllowance, otherEarnings: calc.otherEarnings, gross: calc.gross, proratedGross: calc.proratedGross, custom: calc.customEarnings || {} };
-    const adjustment = adjustmentsByEmployee.get(String(employee._id)) || null;
-    const earningAdj = Number(adjustment?.earningsAdjustment ?? adjustment?.earning ?? 0);
-    const deductionAdj = Number(adjustment?.deductionAdjustment ?? adjustment?.deduction ?? 0);
-    const netPay = roundMoney(calc.netPay + earningAdj - deductionAdj);
-    const slip = await SalarySlip.findOneAndUpdate(
-      { tenantId: req.tenantId, employeeId: employee._id, month },
-      { tenantId: req.tenantId, payrollRunId: run._id, employeeId: employee._id, month, attendanceStats: stats, earnings, deductions: calc.deductions, lop: calc.lop, salaryMasterId: calc.salaryMasterId, salaryMasterEffectiveMonth: calc.salaryMasterEffectiveMonth, netPay, generatedAt: new Date() },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const { slip, calc, netPay } = await buildSlip({
+      tenantId: req.tenantId,
+      run,
+      employee,
+      month,
+      rule,
+      salaryMaster: salaryMasterMap.get(String(employee._id)),
+      adjustment: adjustmentsByEmployee.get(String(employee._id)) || null
+    });
     grossTotal += calc.proratedGross;
     deductionTotal += calc.deductions.total;
     netTotal += netPay;

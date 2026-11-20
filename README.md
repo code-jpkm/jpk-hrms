@@ -128,6 +128,27 @@ and a short tip; click it for humidity, wind, rain chance and PM2.5 / PM10.
   heavy, storm, snow) and `?sceneAqi=320` to any address; `?sceneAt=20:30` sets the time.
 - Check after a deploy: `https://jpk-hrms.onrender.com/api/weather/office`.
 
+## Attendance calendar: rules and day actions
+
+- **Grace:** arriving inside the grace is on time. With a 10:00 shift and 15
+  minutes, 10:14:59 is on time and 10:15:00 is the first late arrival (late 15
+  min). The larger of the policy grace and the shift's grace applies. Leaving
+  within the early tolerance (Attendance rules) before shift end is not early.
+  Only a late / early beyond these uses the monthly quota.
+- **Missing out time:** a past day with one punch is never loss of pay on its
+  own. It shows in yellow ("?") until HR / admin decides.
+- **Change a day from the calendar** (click the day): fix in / out time, mark
+  present / half day / absent, remove LOP, undo an HR change, change the shift
+  (that day only or from that day on), add leave, approve / reject the leave or
+  correction waiting on that day. Each uses the same checks and history as its
+  own screen (`POST /api/attendance/day-action`).
+- **Payroll follows:** after any change the employee's month is recalculated
+  and, when that month's payroll is a draft, their slip and the run totals are
+  updated at once (manual adjustments kept). A released month is never changed;
+  the screen says so.
+- Dates and times are picked from a calendar and a clock (no typing), in the
+  calendar and on the Requests page.
+
 ## Tests run for v27 (local test database)
 
 - Sign-in: 58 checks (captcha, lockout, temporary passwords, reset links, Google
