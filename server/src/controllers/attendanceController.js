@@ -377,7 +377,7 @@ exports.mobileCheckIn = asyncHandler(async (req, res) => {
   const employee = await getOwnEmployee(req);
   res.status(201).json({
     attendance,
-    message: punchMessage({ mode: 'in', now: new Date(), employeeName: employee?.firstName })
+    message: punchMessage({ mode: 'in', now: new Date(), at: attendance?.checkIn, employeeName: employee?.firstName })
   });
 });
 
@@ -386,7 +386,7 @@ exports.mobileCheckOut = asyncHandler(async (req, res) => {
   const employee = await getOwnEmployee(req);
   res.status(201).json({
     attendance,
-    message: punchMessage({ mode: 'out', now: new Date(), employeeName: employee?.firstName })
+    message: punchMessage({ mode: 'out', now: new Date(), at: attendance?.checkOut, employeeName: employee?.firstName })
   });
 });
 

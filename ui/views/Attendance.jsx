@@ -7,7 +7,7 @@ import { punchNow } from '../utils/punch.js';
 import { useApi } from '../hooks/useApi.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { hasAbility, canSeeWfh } from '../utils/permissions.js';
-import { currentMonthKey, shiftMonth, monthLabel, formatTime, durationLabel, initialsOf, todayKey } from '../utils/time.js';
+import { currentMonthKey, shiftMonth, monthLabel, formatTime, formatPunch, durationLabel, initialsOf, todayKey } from '../utils/time.js';
 import PunchCard from './attendance/PunchCard.jsx';
 import MonthCalendar from './attendance/MonthCalendar.jsx';
 import DayDrawer from './attendance/DayDrawer.jsx';
@@ -177,7 +177,7 @@ export default function Attendance() {
   function exportMonth() {
     const days = calendar?.days || [];
     downloadCsv(`attendance-${viewed?.employeeCode || 'employee'}-${month}.csv`, ['Date', 'Day', 'Status', 'Check in', 'Check out', 'Worked', 'Late (min)', 'Early (min)', 'LOP', 'Shift', 'Remarks'],
-      days.filter((d) => !d.isFuture).map((d) => [d.date, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.weekday], statusMeta(d.status).label, d.checkIn ? formatTime(d.checkIn) : '', d.checkOut ? formatTime(d.checkOut) : '', d.workedMinutes ? durationLabel(d.workedMinutes) : '', d.lateMinutes || '', d.earlyLeaveMinutes || '', d.lopDays || '', d.shiftName, d.holidayName || d.deductionReason || '']));
+      days.filter((d) => !d.isFuture).map((d) => [d.date, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.weekday], statusMeta(d.status).label, d.checkIn ? formatPunch(d.checkIn) : '', d.checkOut ? formatPunch(d.checkOut) : '', d.workedMinutes ? durationLabel(d.workedMinutes) : '', d.lateMinutes || '', d.earlyLeaveMinutes || '', d.lopDays || '', d.shiftName, d.holidayName || d.deductionReason || '']));
   }
 
   const firstName = employee?.firstName || user?.name?.split(' ')[0];

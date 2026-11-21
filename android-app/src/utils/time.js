@@ -10,6 +10,7 @@ export function istParts(value = new Date()) {
     day: d.getUTCDate(),
     hours: d.getUTCHours(),
     minutes: d.getUTCMinutes(),
+    seconds: d.getUTCSeconds(),
     weekday: d.getUTCDay()
   };
 }
@@ -61,6 +62,17 @@ export function formatTime(value) {
   const p = istParts(value);
   const h = p.hours % 12 || 12;
   return `${h}:${pad(p.minutes)} ${p.hours < 12 ? 'am' : 'pm'}`;
+}
+
+/**
+ * A check-in / check-out to the second: "9:55:40 am" in India time.
+ * The seconds decide late or on time (10:15:00 is late, 10:14:59 is not).
+ */
+export function formatPunch(value) {
+  if (!value) return '—';
+  const p = istParts(value);
+  if (Number.isNaN(p.hours)) return '—';
+  return `${p.hours % 12 || 12}:${pad(p.minutes)}:${pad(p.seconds)} ${p.hours < 12 ? 'am' : 'pm'}`;
 }
 
 /** "10:00" (24 h) -> "10:00 am" */

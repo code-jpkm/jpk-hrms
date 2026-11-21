@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Icon from '../../components/Icon.jsx';
-import { formatDayKey, formatTime, durationLabel, clockLabel, greetingFor, istParts, todayKey } from '../../utils/time.js';
+import { formatDayKey, formatPunch, durationLabel, clockLabel, greetingFor, istParts, todayKey } from '../../utils/time.js';
 
 function useTick(ms = 1000) {
   const [now, setNow] = useState(() => new Date());
@@ -101,8 +101,8 @@ export default function PunchCard({ firstName, state, stateError, onPunch, punch
         <div className="att-ring-card">
           <Ring value={worked} max={target} label={record?.checkIn ? durationLabel(worked, { short: true }) : '0h'} sub={`of ${durationLabel(target, { short: true })} shift`} color={live ? '#F38121' : '#142330'} />
           <div className="att-today-facts">
-            <div><span>Checked in</span><b>{formatTime(record?.checkIn)}</b></div>
-            <div><span>Checked out</span><b>{formatTime(record?.checkOut)}</b></div>
+            <div><span>Checked in</span><b>{formatPunch(record?.checkIn)}</b></div>
+            <div><span>Checked out</span><b>{formatPunch(record?.checkOut)}</b></div>
             <div><span>{live ? 'Shift left' : 'Late in'}</span><b>{live ? durationLabel(remaining) : late ? `${late} min` : '—'}</b></div>
           </div>
         </div>

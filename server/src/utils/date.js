@@ -197,6 +197,20 @@ function addMonthsClamped(value, months) {
   return new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), Math.min(day, lastDay)));
 }
 
+/**
+ * A time of day on the company clock: "09:57:00 am" with seconds (punches),
+ * "09:57 am" without. Same look as the website's formatTime.
+ */
+function formatCompanyTime(value, { seconds = false, offsetMinutes = companyOffsetMinutes() } = {}) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const local = new Date(d.getTime() + offsetMinutes * 60000);
+  const h24 = local.getUTCHours();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(h24 % 12 || 12)}:${pad(local.getUTCMinutes())}${seconds ? `:${pad(local.getUTCSeconds())}` : ''} ${h24 < 12 ? 'am' : 'pm'}`;
+}
+
 /** "12 Aug 2026" in India time, for letters and PDFs. */
 function formatIndianDate(value, options = { day: '2-digit', month: 'short', year: 'numeric' }) {
   if (!value) return '';
@@ -207,5 +221,5 @@ function formatIndianDate(value, options = { day: '2-digit', month: 'short', yea
 module.exports = {
   dateKey, semanticDateKey, holidayDateKey,
   calendarDay, startOfDay, endOfDay, monthKey, monthRange, eachDate,
-  parseCompanyDateTime, addMonthsClamped, formatIndianDate, companyDayParts,
+  parseCompanyDateTime, addMonthsClamped, formatIndianDate, formatCompanyTime, companyDayParts,
   holidayAppliesTo, companyToday, companyHour };

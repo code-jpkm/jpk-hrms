@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import Icon from '../../components/Icon.jsx';
 import { useApi } from '../../hooks/useApi.js';
 import { post } from '../../api/client.js';
-import { formatTime, durationLabel, formatDayKey, todayKey, initialsOf } from '../../utils/time.js';
+import { formatPunch, durationLabel, formatDayKey, todayKey, initialsOf } from '../../utils/time.js';
 import { TEAM_STATES, LEAVE_NAMES, downloadCsv } from './meta.js';
 
 const FILTERS = [
@@ -58,7 +58,7 @@ export default function TeamBoard({ location, canMessage, onOpenPerson }) {
 
   function exportCsv() {
     downloadCsv(`team-attendance-${date}.csv`, ['Code', 'Name', 'Department', 'Location', 'Status', 'Check in', 'Check out', 'Late (min)', 'Worked', 'Shift'],
-      visible.map((r) => [r.employeeCode, r.name, r.department, r.workLocation, TEAM_STATES[r.state]?.label || r.state, r.checkIn ? formatTime(r.checkIn) : '', r.checkOut ? formatTime(r.checkOut) : '', r.lateMinutes || '', r.workedMinutes ? durationLabel(r.workedMinutes) : '', r.shiftName]));
+      visible.map((r) => [r.employeeCode, r.name, r.department, r.workLocation, TEAM_STATES[r.state]?.label || r.state, r.checkIn ? formatPunch(r.checkIn) : '', r.checkOut ? formatPunch(r.checkOut) : '', r.lateMinutes || '', r.workedMinutes ? durationLabel(r.workedMinutes) : '', r.shiftName]));
   }
 
   return (
@@ -100,8 +100,8 @@ export default function TeamBoard({ location, canMessage, onOpenPerson }) {
                   <span className="att-pill" style={{ '--pill': st.dot, '--pill-soft': `${st.dot}1f`, background: `${st.dot}1f`, color: st.dot }}>{r.state === 'LEAVE' ? (LEAVE_NAMES[r.leaveType] || 'Leave') : r.state === 'HOLIDAY' ? r.holidayName || 'Holiday' : st.label}</span>
                 </div>
                 <div className="att-person-meta">
-                  <div><span>In</span><b>{r.checkIn ? formatTime(r.checkIn) : '—'}</b></div>
-                  <div><span>Out</span><b>{r.checkOut ? formatTime(r.checkOut) : r.state === 'IN' ? 'On duty' : '—'}</b></div>
+                  <div><span>In</span><b>{r.checkIn ? formatPunch(r.checkIn) : '—'}</b></div>
+                  <div><span>Out</span><b>{r.checkOut ? formatPunch(r.checkOut) : r.state === 'IN' ? 'On duty' : '—'}</b></div>
                   <div><span>Worked</span><b>{r.workedMinutes ? durationLabel(r.workedMinutes, { short: true }) : '—'}</b></div>
                 </div>
                 <div className="att-person-foot">

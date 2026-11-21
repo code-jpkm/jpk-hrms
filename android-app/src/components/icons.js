@@ -12,6 +12,7 @@ export { default as CheckCircle2 } from 'lucide-react-native/dist/esm/icons/circ
 export { default as ChevronDown } from 'lucide-react-native/dist/esm/icons/chevron-down';
 export { default as ChevronLeft } from 'lucide-react-native/dist/esm/icons/chevron-left';
 export { default as ChevronRight } from 'lucide-react-native/dist/esm/icons/chevron-right';
+export { default as ChevronUp } from 'lucide-react-native/dist/esm/icons/chevron-up';
 export { default as Circle } from 'lucide-react-native/dist/esm/icons/circle';
 export { default as CircleUser } from 'lucide-react-native/dist/esm/icons/circle-user';
 export { default as ClipboardCheck } from 'lucide-react-native/dist/esm/icons/clipboard-check';
@@ -22,6 +23,7 @@ export { default as ExternalLink } from 'lucide-react-native/dist/esm/icons/exte
 export { default as Eye } from 'lucide-react-native/dist/esm/icons/eye';
 export { default as EyeOff } from 'lucide-react-native/dist/esm/icons/eye-off';
 export { default as FileClock } from 'lucide-react-native/dist/esm/icons/file-clock';
+export { default as FileDown } from 'lucide-react-native/dist/esm/icons/file-down';
 export { default as FilePenLine } from 'lucide-react-native/dist/esm/icons/file-pen-line';
 export { default as FileText } from 'lucide-react-native/dist/esm/icons/file-text';
 export { default as Fingerprint } from 'lucide-react-native/dist/esm/icons/fingerprint';
@@ -30,9 +32,12 @@ export { default as Inbox } from 'lucide-react-native/dist/esm/icons/inbox';
 export { default as KeyRound } from 'lucide-react-native/dist/esm/icons/key-round';
 export { default as LayoutDashboard } from 'lucide-react-native/dist/esm/icons/layout-dashboard';
 export { default as LayoutGrid } from 'lucide-react-native/dist/esm/icons/layout-grid';
+export { default as ListTree } from 'lucide-react-native/dist/esm/icons/list-tree';
 export { default as LogIn } from 'lucide-react-native/dist/esm/icons/log-in';
 export { default as LogOut } from 'lucide-react-native/dist/esm/icons/log-out';
+export { default as Maximize2 } from 'lucide-react-native/dist/esm/icons/maximize-2';
 export { default as Megaphone } from 'lucide-react-native/dist/esm/icons/megaphone';
+export { default as Minus } from 'lucide-react-native/dist/esm/icons/minus';
 export { default as Network } from 'lucide-react-native/dist/esm/icons/network';
 export { default as Palmtree } from 'lucide-react-native/dist/esm/icons/tree-palm';
 export { default as Paperclip } from 'lucide-react-native/dist/esm/icons/paperclip';

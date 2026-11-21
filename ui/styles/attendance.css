@@ -230,6 +230,12 @@
 .att-person-meta div{padding:8px 9px;border-radius:8px;background:#F7F7F8}
 .att-person-meta span{display:block;font-size:10.5px;font-weight:600;color:var(--att-muted);text-transform:uppercase;letter-spacing:0.05em}
 .att-person-meta b{display:block;font-size:13px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+/* In / out carry seconds ("12:00:42 pm"): give them the wider columns and keep each on one line. */
+.att-person-meta{grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) minmax(0,1fr);gap:6px}
+.att-person-meta div{padding:8px}
+.att-person-meta b{white-space:nowrap;font-size:12.5px}
+.att-people{grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))}
+@media (max-width:400px){.att-person-meta div{padding:8px 6px}}
 .att-person.st-IN{border-left:4px solid var(--st-live)}
 .att-person.st-DONE{border-left:4px solid var(--st-present)}
 .att-person.st-MISSING,.att-person.st-ABSENT{border-left:4px solid var(--st-absent)}
@@ -360,6 +366,9 @@
 .att-ring-label small{color:#807F84}
 .att-today-facts div{color:#6A6A6F;border-bottom:1px solid #EBEBED}
 .att-today-facts b{color:#1F3445}
+.att-today-facts span,.att-today-facts b{white-space:nowrap}
+/* Check-in now shows seconds: on mid-size screens a smaller ring leaves room for "Checked in 09:57:23 am" on one line. */
+@media (max-width:1100px){.att-ring-card{grid-template-columns:104px 1fr;gap:12px;padding:14px}.att-ring{width:104px;height:104px}.att-ring-label b{font-size:19px}}
 .att-mini-stats div{background:#fff;border:1px solid #EBEBED;border-radius:8px}
 .att-mini-stats b{color:#1F3445}
 .att-mini-stats span{color:#807F84;letter-spacing:.04em}
@@ -403,6 +412,12 @@
 .c-pending{background:#F2F2F3;color:#6A6A6F}
 .c-future{display:none}
 .att-times{font-size:12px;color:#3D3D41;font-variant-numeric:tabular-nums;font-weight:500;gap:0}
+/* Punch times carry seconds, so in and out sit on their own lines. */
+.att-times{flex-direction:column;align-items:flex-start;line-height:1.35}
+.att-times span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.att-times i{font-style:normal;color:#807F84;display:inline-block;min-width:26px}
+/* Narrow day boxes: the time alone (in on top, out below) so the seconds and am/pm never get cut. */
+@media (max-width:1100px){.att-times i{display:none}}
 .att-day-caption{font-size:11.5px;color:#6A6A6F;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .att-day-hours{font-size:11.5px;color:#807F84}
 .att-notes{display:grid;gap:1px;margin-top:auto}

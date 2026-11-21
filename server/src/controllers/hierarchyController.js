@@ -47,14 +47,19 @@ exports.tree = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /hierarchy/chart.pdf — the chart as on screen: { view: 'TREE'|'LIST',
- * rootId (one person's team), collapsed: [ids of closed teams], paper: 'FULL'|'A4'|'A3' }.
+ * The chart as on screen: { view: 'TREE'|'LIST', rootId (one person's team),
+ * collapsed: [ids of closed teams], paper: 'FULL'|'A4'|'A3' }.
+ * POST /hierarchy/chart.pdf with a JSON body (website), or
+ * GET /hierarchy/chart.pdf?view=&paper=&rootId=&collapsed=id,id (phone app downloads).
  */
 exports.chartPdf = asyncHandler(async (req, res) => {
-  const view = String(req.body?.view || 'TREE').toUpperCase() === 'LIST' ? 'LIST' : 'TREE';
-  const paper = ['A4', 'A3'].includes(String(req.body?.paper || '').toUpperCase()) ? String(req.body.paper).toUpperCase() : 'FULL';
-  const collapsed = new Set((Array.isArray(req.body?.collapsed) ? req.body.collapsed : []).slice(0, 20000).map(String));
-  const rootId = req.body?.rootId ? String(req.body.rootId) : '';
+  const input = req.method === 'GET'
+    ? { ...req.query, collapsed: String(req.query.collapsed || '').split(',').map((id) => id.trim()).filter(Boolean) }
+    : (req.body || {});
+  const view = String(input.view || 'TREE').toUpperCase() === 'LIST' ? 'LIST' : 'TREE';
+  const paper = ['A4', 'A3'].includes(String(input.paper || '').toUpperCase()) ? String(input.paper).toUpperCase() : 'FULL';
+  const collapsed = new Set((Array.isArray(input.collapsed) ? input.collapsed : []).slice(0, 20000).map(String));
+  const rootId = input.rootId ? String(input.rootId) : '';
   if (rootId && !mongoose.isValidObjectId(rootId)) throw new ApiError(400, 'Choose a person from the list');
 
   const [employees, tenant] = await Promise.all([chartEmployees(req.tenantId), Tenant.findById(req.tenantId).select('name').lean()]);

@@ -12,7 +12,7 @@ import { useApi } from '../hooks/useApi';
 import { post } from '../api/client';
 import { useAuth } from '../state/AuthContext';
 import { colors, font, radius, shadow } from '../theme';
-import { formatClock, formatDate, formatDay, formatMinutes, formatTime, money, monthLabel, todayKey } from '../utils/time';
+import { formatClock, formatDate, formatDay, formatMinutes, formatPunch, money, monthLabel, todayKey } from '../utils/time';
 import { leaveName } from '../utils/attendance';
 import { canAccessPath, canApprove } from '../utils/permissions';
 
@@ -64,7 +64,7 @@ function TodayCard({ state, error, onPunched }) {
   const label = state.completed
     ? `Done for today${a?.workedMinutes ? ` · ${formatMinutes(a.workedMinutes)}` : ''}`
     : state.canCheckOut
-      ? `Checked in at ${formatTime(a?.checkIn)}${state.workedMinutes ? ` · ${formatMinutes(state.workedMinutes)} so far` : ''}`
+      ? `Checked in at ${formatPunch(a?.checkIn)}${state.workedMinutes ? ` · ${formatMinutes(state.workedMinutes)} so far` : ''}`
       : 'Not checked in yet';
 
   async function punch(kind) {
@@ -90,6 +90,7 @@ function TodayCard({ state, error, onPunched }) {
         <View style={{ flex: 1, gap: 2 }}>
           <T v="eyebrow">Today · {formatDay(state.date || todayKey())}</T>
           <T v="h3">{label}</T>
+          {state.completed && (a?.checkIn || a?.checkOut) && <T v="small">In {formatPunch(a?.checkIn)} · Out {formatPunch(a?.checkOut)}</T>}
           {shift && <T v="small">{shift.name} · {formatClock(shift.startTime)} – {formatClock(shift.endTime)}{state.lateMinutes ? ` · ${formatMinutes(state.lateMinutes)} late` : ''}</T>}
         </View>
         <View style={[styles.todayIcon, state.canCheckOut && { backgroundColor: colors.orange50 }]}>

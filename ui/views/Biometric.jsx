@@ -17,6 +17,9 @@ const IST = 'Asia/Kolkata';
 const todayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: IST }).format(new Date());
 const whenFormat = new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 const when = (value) => (value ? whenFormat.format(new Date(value)).replace(/\b(am|pm)\b/i, (m) => m.toLowerCase()) : '—');
+// A punch from a machine, to the second (as on the attendance pages): "21 Nov, 9:57:23 am".
+const punchFormat = new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const whenPunch = (value) => (value ? punchFormat.format(new Date(value)).replace(/\b(am|pm)\b/i, (m) => m.toLowerCase()) : '—');
 function ago(value) {
   if (!value) return 'never';
   const s = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
@@ -200,7 +203,7 @@ export default function Biometric() {
                   <span className={`mc-avatar ${p.employee ? '' : 'anon'}`}>{p.employee ? initials(p.employee.name) : p.pin}</span>
                   <div className="mc-punch-main">
                     <b>{p.employee ? p.employee.name : `Machine ID ${p.pin}`}</b>
-                    <small>{when(p.at)}{VERIFY[p.verify] ? ` · ${VERIFY[p.verify]}` : ''} · {p.machine}{p.receivedAt && new Date(p.receivedAt) - new Date(p.at) > 10 * 60000 ? ` · arrived ${ago(p.receivedAt)}` : ''}</small>
+                    <small>{whenPunch(p.at)}{VERIFY[p.verify] ? ` · ${VERIFY[p.verify]}` : ''} · {p.machine}{p.receivedAt && new Date(p.receivedAt) - new Date(p.at) > 10 * 60000 ? ` · arrived ${ago(p.receivedAt)}` : ''}</small>
                   </div>
                   <span className={`mc-chip ${p.tone}`}>{p.label}</span>
                 </div>
@@ -301,7 +304,7 @@ function MachineCard({ m, connect, canManage, onChanged }) {
 
       <div className="mc-facts">
         <span><b>{m.totalPunches || 0}</b>punches received</span>
-        <span><b>{when(m.lastPunchAt)}</b>latest punch</span>
+        <span><b>{whenPunch(m.lastPunchAt)}</b>latest punch</span>
         <span><b>{m.peopleOnMachine || '—'}</b>people on machine</span>
         <span><b>{m.lastIp || '—'}</b>connects from</span>
       </div>
@@ -447,7 +450,7 @@ function PersonRow({ p, employees, canManage, onChanged }) {
         )}
       </span>
       <span className="mc-muted">{p.punches}{p.notLinked > 0 && <em className="mc-wait"> · {p.notLinked} waiting</em>}</span>
-      <span className="mc-muted">{when(p.lastAt)}</span>
+      <span className="mc-muted">{whenPunch(p.lastAt)}</span>
     </div>
   );
 }
@@ -817,7 +820,7 @@ function BridgeSetup({ canManage, canSync }) {
         <summary>Raw punch log (technical) · {punches?.punches?.length || 0} recent</summary>
         {!punches?.punches?.length ? <Empty /> : (
           <Table columns={['Time', 'Device', 'Location', 'Employee', 'Added', 'Reason']} rows={punches.punches} renderRow={(p) => (
-            <tr key={p._id}><td>{when(p.timestamp)}</td><td>{p.deviceId}</td><td>{p.locationName}</td><td>{p.employeeId?.employeeCode || p.employeeCode || p.deviceUserId}</td><td>{p.imported ? 'Yes' : 'No'}</td><td>{p.skippedReason || '—'}</td></tr>
+            <tr key={p._id}><td>{whenPunch(p.timestamp)}</td><td>{p.deviceId}</td><td>{p.locationName}</td><td>{p.employeeId?.employeeCode || p.employeeCode || p.deviceUserId}</td><td>{p.imported ? 'Yes' : 'No'}</td><td>{p.skippedReason || '—'}</td></tr>
           )} />
         )}
       </details>

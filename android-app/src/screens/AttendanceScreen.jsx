@@ -9,7 +9,7 @@ import { Button, Card, IconButton, NoProfile, Notice, SkeletonCard } from '../co
 import { useAuth } from '../state/AuthContext';
 import { useApi } from '../hooks/useApi';
 import { colors, font, radius, shadow } from '../theme';
-import { formatClock, formatDay, formatMinutes, formatTime, monthKey, monthLabel, shiftMonth, WEEKDAYS } from '../utils/time';
+import { formatClock, formatDay, formatMinutes, formatPunch, monthKey, monthLabel, shiftMonth, WEEKDAYS } from '../utils/time';
 import { isIssue, leaveName, statusMeta } from '../utils/attendance';
 
 function Code({ status, small }) {
@@ -119,8 +119,8 @@ export default function AttendanceScreen({ navigation }) {
               <T v="h3">{statusMeta(open.status).label}{open.leaveType ? ` · ${leaveName(open.leaveType)}` : ''}{open.holidayName ? ` · ${open.holidayName}` : ''}</T>
             </View>
             <View style={styles.facts}>
-              <Fact label="Check-in" value={open.checkIn ? formatTime(open.checkIn) : '—'} />
-              <Fact label="Check-out" value={open.checkOut ? formatTime(open.checkOut) : '—'} />
+              <Fact label="Check-in" value={open.checkIn ? formatPunch(open.checkIn) : '—'} />
+              <Fact label="Check-out" value={open.checkOut ? formatPunch(open.checkOut) : '—'} />
               <Fact label="Worked" value={open.workedMinutes ? formatMinutes(open.workedMinutes) : '—'} />
               <Fact label="Shift" value={open.shiftStart ? `${formatClock(open.shiftStart)} – ${formatClock(open.shiftEnd)}` : '—'} />
             </View>

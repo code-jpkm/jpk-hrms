@@ -2,7 +2,7 @@ const Attendance = require('../models/Attendance');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const AttendancePolicy = require('../models/AttendancePolicy');
 const { computeShiftWindow, resolveTimezoneOffset } = require('../utils/shift');
-const { startOfDay, companyHour } = require('../utils/date');
+const { startOfDay, companyHour, formatCompanyTime } = require('../utils/date');
 
 const DEFAULT_GRACE_MINUTES = 180;
 
@@ -123,20 +123,26 @@ async function autoCloseStalePunches({ tenantId, employeeId = null, now = new Da
   return { closed: closed.length, ids: closed };
 }
 
-/** Friendly end-of-punch copy, varied by the hour rather than a flat string. */
-function punchMessage({ mode, now = new Date(), employeeName = '' }) {
+/**
+ * Friendly end-of-punch copy, varied by the hour rather than a flat string.
+ * It names the punch time to the second ("at 09:57:12 am"): `at` is the time
+ * actually saved, so the message matches the attendance record exactly.
+ */
+function punchMessage({ mode, now = new Date(), at, employeeName = '' }) {
   const first = String(employeeName || '').split(' ')[0];
   const who = first ? `, ${first}` : '';
+  const when = at || now;
+  const time = formatCompanyTime(when, { seconds: true });
   // Company clock, not the server's: on a UTC host a 3 pm IST check-in said "Good morning".
-  const hour = companyHour(now);
+  const hour = companyHour(new Date(when));
   if (mode === 'in') {
-    if (hour < 11) return `Good morning${who} — you're checked in. Have a good shift.`;
-    if (hour < 16) return `Checked in${who}. Have a good shift.`;
-    return `Checked in${who}. Have a good shift tonight.`;
+    if (hour < 11) return `Good morning${who} — you're checked in at ${time}. Have a good shift.`;
+    if (hour < 16) return `You're checked in at ${time}${who}. Have a good shift.`;
+    return `You're checked in at ${time}${who}. Have a good shift tonight.`;
   }
-  if (hour < 16) return `Attendance captured${who}. See you tomorrow, on time.`;
-  if (hour < 21) return `Attendance captured${who}. Have a good evening — see you tomorrow.`;
-  return `Attendance captured${who}. Have a great night, see you tomorrow.`;
+  if (hour < 16) return `Attendance captured at ${time}${who}. See you tomorrow, on time.`;
+  if (hour < 21) return `Attendance captured at ${time}${who}. Have a good evening — see you tomorrow.`;
+  return `Attendance captured at ${time}${who}. Have a great night, see you tomorrow.`;
 }
 
 module.exports = {

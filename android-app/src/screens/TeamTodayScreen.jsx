@@ -7,7 +7,7 @@ import T from '../components/T';
 import { Avatar, Card, Empty, IconButton, Notice, SkeletonCard } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { colors, font, radius, shadow } from '../theme';
-import { formatDay, formatMinutes, formatTime, todayKey } from '../utils/time';
+import { formatDay, formatMinutes, formatPunch, todayKey } from '../utils/time';
 import { TEAM_STATES, leaveName } from '../utils/attendance';
 
 const FILTERS = [
@@ -25,8 +25,8 @@ function shiftDay(key, delta) {
 }
 
 function detail(r) {
-  if (r.state === 'IN') return `In at ${formatTime(r.checkIn)} · ${formatMinutes(r.workedMinutes)} so far`;
-  if (r.state === 'DONE') return `${formatTime(r.checkIn)} – ${formatTime(r.checkOut)} · ${formatMinutes(r.workedMinutes)}`;
+  if (r.state === 'IN') return `In at ${formatPunch(r.checkIn)} · ${formatMinutes(r.workedMinutes)} so far`;
+  if (r.state === 'DONE') return `${formatPunch(r.checkIn)} – ${formatPunch(r.checkOut)} · ${formatMinutes(r.workedMinutes)}`;
   if (r.state === 'LEAVE' || r.state === 'WFH') return leaveName(r.leaveType || r.state);
   if (r.state === 'HOLIDAY') return r.holidayName || 'Holiday';
   if (r.state === 'NOT_YET') return r.shiftStart ? `Shift starts ${r.shiftStart}` : 'Shift not started';

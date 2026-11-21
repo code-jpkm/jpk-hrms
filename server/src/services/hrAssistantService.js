@@ -33,7 +33,7 @@ function fullName(e) {
 function timeOf(value, offsetMinutes = 330) {
   if (!value) return null;
   return new Date(value).toLocaleTimeString('en-IN', {
-    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
   });
 }
 

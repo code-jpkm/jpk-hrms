@@ -5,7 +5,7 @@ import { useApi } from '../hooks/useApi.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { canAccessPath } from '../utils/permissions.js';
 import { defaultFavouriteIds, usableQuickActions } from '../utils/nav.js';
-import { clockLabel, durationLabel, formatDayKey, formatTime, todayKey } from '../utils/time.js';
+import { clockLabel, durationLabel, formatDayKey, formatPunch, todayKey } from '../utils/time.js';
 import DayScene, { PERIOD_ICON, greetingAt, periodLine } from '../components/DayScene.jsx';
 import WeatherBadge from '../components/WeatherBadge.jsx';
 import { weatherIcon } from '../utils/weather.js';
@@ -131,7 +131,7 @@ function TodayCard() {
 
   let status = 'Not checked in yet';
   if (state?.completed) status = `Day complete · ${durationLabel(worked)}`;
-  else if (live) status = `Checked in at ${formatTime(record.checkIn)}${state?.lateMinutes ? ` · ${state.lateMinutes} min late` : ''}`;
+  else if (live) status = `Checked in at ${formatPunch(record.checkIn)}${state?.lateMinutes ? ` · ${state.lateMinutes} min late` : ''}`;
 
   return (
     <section className="home-card">
@@ -149,7 +149,7 @@ function TodayCard() {
             <div>
               <small>Status</small>
               <b className={live || state.completed ? 'ok' : ''}>{status}</b>
-              {record?.checkIn && <span>{record.checkOut ? `Out at ${formatTime(record.checkOut)}` : `${durationLabel(worked)} so far`}</span>}
+              {record?.checkIn && <span>{record.checkOut ? `Out at ${formatPunch(record.checkOut)}` : `${durationLabel(worked)} so far`}</span>}
             </div>
           </div>
           <div className="home-card-actions">

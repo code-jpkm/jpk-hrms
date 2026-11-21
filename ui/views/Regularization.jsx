@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { toIstInputValue, istInputToIso, currentMonthKey, formatTime, formatDayKey, formatDate } from '../utils/time.js';
+import { toIstInputValue, istInputToIso, currentMonthKey, formatPunch, formatDayKey, formatDate } from '../utils/time.js';
 import { Card, Empty, ErrorBox, Field } from '../components/Ui.jsx';
 import { post } from '../api/client.js';
 import { useApi } from '../hooks/useApi.js';
@@ -11,7 +11,7 @@ import '../styles/attendance.css';
 
 const CLOSED = new Set(['HOLIDAY', 'WEEK_OFF', 'UPCOMING']);
 const ISSUE = new Set(['ABSENT', 'HALF_DAY', 'NOT_MARKED']);
-const fmtTime = (v) => v ? formatTime(v) : 'Missing';
+const fmtTime = (v) => v ? formatPunch(v) : 'Missing';
 const prettyStatus = (v='') => v.replaceAll('_', ' ');
 const dayName = (date, style='short') => formatDayKey(date, { weekday: style });
 const longDate = (date) => formatDayKey(date, { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
@@ -108,7 +108,7 @@ export default function Regularization() {
           // Today is still running: an empty punch is not "missing" yet.
           const runningToday = d.isToday && ['NOT_MARKED', 'IN_PROGRESS'].includes(d.status);
           const notes = [d.lateMinutes > 0 && `Late ${d.lateMinutes}m`, d.earlyLeaveMinutes > 0 && `Left ${d.earlyLeaveMinutes}m early`, d.lopDays > 0 && `${d.lopDays} LOP`, !runningToday && !closed && d.status !== 'UPCOMING' && (!d.checkIn || !d.checkOut) && !['LEAVE', 'WFH'].includes(d.status) && 'Missing punch'].filter(Boolean);
-          const timeOf = (v) => (v ? formatTime(v) : runningToday || closed || ['UPCOMING', 'LEAVE', 'WFH'].includes(d.status) ? '—' : <i>Missing</i>);
+          const timeOf = (v) => (v ? formatPunch(v) : runningToday || closed || ['UPCOMING', 'LEAVE', 'WFH'].includes(d.status) ? '—' : <i>Missing</i>);
           return <button type="button" role="row" key={d.date} className={`reg-row ${issue && !runningToday ? 'needs-action' : ''} ${closed ? 'is-closed' : ''} ${d.isToday ? 'is-today' : ''} ${selected?.date === d.date ? 'selected' : ''}`} onClick={() => choose(d)} disabled={closed}>
             <span className="reg-date"><b>{formatDayKey(d.date, { day: '2-digit', month: 'short' })}</b><small>{dayName(d.date)}</small></span>
             <span><b className={`att-code c-${meta.tone}`}>{meta.short || '–'}</b> {d.status === 'HOLIDAY' ? (d.holidayName || 'Holiday') : meta.label}</span>

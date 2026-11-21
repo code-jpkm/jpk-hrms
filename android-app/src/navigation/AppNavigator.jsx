@@ -25,6 +25,7 @@ import CelebrationsScreen from '../screens/CelebrationsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import ApprovalsScreen from '../screens/ApprovalsScreen';
 import TeamTodayScreen from '../screens/TeamTodayScreen';
+import OrgChartScreen from '../screens/OrgChartScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
@@ -121,6 +122,7 @@ export default function AppNavigator() {
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Approvals" component={ApprovalsScreen} />
       <Stack.Screen name="TeamToday" component={TeamTodayScreen} />
+      <Stack.Screen name="OrgChart" component={OrgChartScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
       <Stack.Screen name="Server" component={ServerScreen} />

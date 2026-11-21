@@ -2,6 +2,8 @@
  * Organisation chart layout, shared by the tree view on the Organisation chart
  * page and the PDF the server draws (server/src/services/orgChartPdfService.js
  * loads this file with import()), so the download looks like the screen.
+ * The phone app has the same code in android-app/src/utils/orgChartLayout.js:
+ * change both together (testenv/orgchart-layout-test.mjs checks they agree).
  *
  * Top-down tree. A manager whose reports have no reports of their own gets
  * them in two columns either side of one line (much narrower than a row);

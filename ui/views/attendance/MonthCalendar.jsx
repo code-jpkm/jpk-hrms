@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatTime, durationLabel } from '../../utils/time.js';
+import { formatPunch, durationLabel } from '../../utils/time.js';
 import { statusMeta, WEEKDAYS, isIssue, LEAVE_NAMES } from './meta.js';
 
 function codeFor(day) {
@@ -41,7 +41,7 @@ function DayCell({ day, onOpen }) {
   if (overtime > 0) notes.push({ k: 'ot', t: `+${durationLabel(overtime, { short: true })} extra` });
   if ((day.pendingRegularization || day.pendingLeave) && day.status !== 'UPCOMING') notes.push({ k: 'pending', t: 'Request pending' });
 
-  const label = `${day.date}: ${meta.label}${day.checkIn ? `, in ${formatTime(day.checkIn)}` : ''}${day.checkOut ? `, out ${formatTime(day.checkOut)}` : ''}`;
+  const label = `${day.date}: ${meta.label}${day.checkIn ? `, in ${formatPunch(day.checkIn)}` : ''}${day.checkOut ? `, out ${formatPunch(day.checkOut)}` : ''}`;
 
   return (
     <button type="button" className={classes.join(' ')} onClick={() => onOpen(day)} disabled={disabled} aria-label={label} title={label}>
@@ -50,7 +50,10 @@ function DayCell({ day, onOpen }) {
         {code && <span className={`att-code c-${tone}`}>{code}</span>}
       </div>
       {(day.checkIn || day.checkOut) && (
-        <div className="att-times">{formatTime(day.checkIn)} – {day.checkOut ? formatTime(day.checkOut) : day.status === 'IN_PROGRESS' ? 'now' : day.status === 'REVIEW' ? '?' : '—'}</div>
+        <div className="att-times">
+          <span><i>In</i>{formatPunch(day.checkIn)}</span>
+          <span><i>Out</i>{day.checkOut ? formatPunch(day.checkOut) : day.status === 'IN_PROGRESS' ? 'on duty' : day.status === 'REVIEW' ? 'missing' : '—'}</span>
+        </div>
       )}
       {caption && <div className="att-day-caption">{caption}</div>}
       {worked > 0 && !notes.length && <div className="att-day-hours">{durationLabel(worked, { short: true })}</div>}

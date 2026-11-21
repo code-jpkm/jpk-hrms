@@ -4,7 +4,7 @@ import Icon from '../Icon.jsx';
 import { api, post } from '../../api/client.js';
 import { useApi } from '../../hooks/useApi.js';
 import { GeminiBadge, AiSetupHint, useAiStatus } from '../AiKit.jsx';
-import { currentMonthKey, durationLabel, formatDayKey, initialsOf, todayKey } from '../../utils/time.js';
+import { currentMonthKey, durationLabel, formatDayKey, formatPunch, initialsOf, todayKey } from '../../utils/time.js';
 import '../../styles/attendance.css';
 import '../../styles/v26.css';
 
@@ -153,7 +153,7 @@ export function MyMonth() {
             <div><i className="bad" /><b>{s.missingPunches}</b><span>Missed</span></div>
           </div>
           <small className="dash-sub">
-            {today?.checkIn ? `Today: in at ${new Date(today.checkIn).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}${today.workedMinutes ? ` · ${durationLabel(today.workedMinutes, { short: true })} so far` : ''}` : 'You have not checked in today.'}
+            {today?.checkIn ? `Today: in at ${formatPunch(today.checkIn)}${today.workedMinutes ? ` · ${durationLabel(today.workedMinutes, { short: true })} so far` : ''}` : 'You have not checked in today.'}
             {s.avgCheckIn ? ` · Avg arrival ${s.avgCheckIn}` : ''}
           </small>
         </>

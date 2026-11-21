@@ -58,6 +58,15 @@ export function formatTime(value, { seconds = false } = {}) {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), hour12: true, timeZone: COMPANY_TZ });
 }
 
+/**
+ * A check-in / check-out on the company clock, to the second: "10:00:40 am".
+ * The seconds decide late or on time (grace ends at 10:14:59; 10:15:00 is late),
+ * so every punch time on screen shows them.
+ */
+export function formatPunch(value) {
+  return formatTime(value, { seconds: true });
+}
+
 /** An instant shown as an IST date: "12 Aug 2026". */
 export function formatDate(value, options = { day: '2-digit', month: 'short', year: 'numeric' }) {
   if (!value) return '—';

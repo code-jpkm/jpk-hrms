@@ -38,7 +38,8 @@ function groupsFor(user) {
       title: 'My team',
       items: [
         canApprove(user) && { label: 'Approvals', icon: ClipboardCheck, route: ['Approvals'] },
-        teamToday && can('/attendance') && { label: 'Team today', icon: UsersRound, route: ['TeamToday'] }
+        teamToday && can('/attendance') && { label: 'Team today', icon: UsersRound, route: ['TeamToday'] },
+        can('/hierarchy') && { label: 'Organisation chart', icon: Network, route: ['OrgChart'] }
       ].filter(Boolean)
     },
     {
@@ -47,7 +48,6 @@ function groupsFor(user) {
       items: [
         !isEmployee && { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
         can('/employees') && { label: 'Employees', icon: Users, path: '/employees' },
-        can('/hierarchy') && { label: 'Organisation chart', icon: Network, path: '/hierarchy' },
         can('/recruitment') && { label: 'Recruitment', icon: UserPlus, path: '/recruitment' },
         can('/probation') && { label: 'Probation', icon: ClipboardCheck, path: '/probation' },
         can('/document-studio') && { label: 'Letters & documents', icon: FileText, path: '/document-studio' },

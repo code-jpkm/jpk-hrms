@@ -4,7 +4,7 @@ import Icon from '../../components/Icon.jsx';
 import { post } from '../../api/client.js';
 import { useApi } from '../../hooks/useApi.js';
 import { DateTimeField, addDaysToKey } from '../../components/DateTimePicker.jsx';
-import { formatDayKey, formatTime, durationLabel, parseHHMM, istMinutes, toIstInputValue, clockLabel, monthLabel } from '../../utils/time.js';
+import { formatDayKey, formatTime, formatPunch, durationLabel, parseHHMM, istMinutes, toIstInputValue, clockLabel, monthLabel } from '../../utils/time.js';
 import { statusMeta, LEAVE_NAMES } from './meta.js';
 
 function ShiftTimeline({ day }) {
@@ -40,8 +40,8 @@ function ShiftTimeline({ day }) {
         {data.shiftStart !== null && data.shiftEnd !== null && <span className="shift" style={{ left: data.pos(data.shiftStart), width: data.width(data.shiftStart, data.shiftEnd) }} />}
         {data.shiftStart !== null && data.grace > 0 && <span className="grace" style={{ left: data.pos(data.shiftStart), width: data.width(data.shiftStart, data.shiftStart + data.grace) }} />}
         {data.inM !== null && <span className={`work ${day.status === 'IN_PROGRESS' ? 'is-live' : ''}`} style={{ left: data.pos(data.inM), width: data.width(data.inM, data.outM ?? data.inM + 2) }} />}
-        {data.inM !== null && <span className="att-marker" style={{ left: data.pos(data.inM) }}>In {formatTime(day.checkIn)}</span>}
-        {day.checkOut && data.outM !== null && <span className="att-marker" style={{ left: data.pos(data.outM) }}>Out {formatTime(day.checkOut)}</span>}
+        {data.inM !== null && <span className="att-marker" style={{ left: data.pos(data.inM) }}>In {formatPunch(day.checkIn)}</span>}
+        {day.checkOut && data.outM !== null && <span className="att-marker" style={{ left: data.pos(data.outM) }}>Out {formatPunch(day.checkOut)}</span>}
       </div>
       <div className="att-ticks">{data.ticks.map((t) => <span key={t} style={{ left: data.pos(t) }}>{label(t)}</span>)}</div>
       <div className="att-timeline-legend">
@@ -247,8 +247,8 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
                 <b>{day.missingSide === 'IN' ? 'In time missing' : 'Out time missing'}{canOverride || canFix ? ': your decision' : ''}</b>
                 <p>
                   {day.missingSide === 'IN'
-                    ? `Only the out punch at ${formatTime(day.checkOut)} was recorded.`
-                    : `Only the in punch at ${formatTime(day.checkIn)} was recorded.`}{' '}
+                    ? `Only the out punch at ${formatPunch(day.checkOut)} was recorded.`
+                    : `Only the in punch at ${formatPunch(day.checkIn)} was recorded.`}{' '}
                   {isSelf && !canOverride
                     ? 'HR will decide this day. Until then there is no loss of pay. If you know your out time, send it.'
                     : 'No loss of pay is charged until this is decided.'}
@@ -306,8 +306,8 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
             )}
 
             <div className="att-facts">
-              <div><span>Check in</span><b>{formatTime(day.checkIn)}</b></div>
-              <div><span>Check out</span><b className={isReview && day.missingSide === 'OUT' ? 'review' : ''}>{day.checkOut ? formatTime(day.checkOut) : day.status === 'IN_PROGRESS' ? 'On duty' : isReview ? 'Missing' : '—'}</b></div>
+              <div><span>Check in</span><b>{formatPunch(day.checkIn)}</b></div>
+              <div><span>Check out</span><b className={isReview && day.missingSide === 'OUT' ? 'review' : ''}>{day.checkOut ? formatPunch(day.checkOut) : day.status === 'IN_PROGRESS' ? 'On duty' : isReview ? 'Missing' : '—'}</b></div>
               <div><span>Worked</span><b>{day.workedMinutes ? durationLabel(day.workedMinutes) : '—'}</b></div>
               <div><span>Late in</span><b className={Number(day.lateMinutes) > 0 ? 'warn' : ''}>{Number(day.lateMinutes) > 0 ? `${day.lateMinutes} min` : day.withinGrace ? 'On time (grace)' : day.checkIn ? 'On time' : '—'}</b></div>
               <div><span>Early out</span><b className={day.earlyLeaveMinutes ? 'warn' : ''}>{day.earlyLeaveMinutes ? `${day.earlyLeaveMinutes} min` : '—'}</b></div>
@@ -339,7 +339,7 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
               {reasons.length ? (
                 <ul className="att-rule-list">{reasons.map((r, i) => <li key={i}><Icon name="CircleCheck" size={14} />{r}</li>)}</ul>
               ) : (
-                <p className="att-empty" style={{ padding: 4, textAlign: 'left' }}>{day.status === 'IN_PROGRESS' ? `Checked in at ${formatTime(day.checkIn)}${day.progressLabel ? ` · ${day.progressLabel}` : ''}. Check-out is still pending.` : day.status === 'ABSENT' && !day.checkIn ? 'No punch was recorded on a working day, so it counts as absent (1 day LOP) unless leave or a correction covers it.' : 'Nothing unusual on this day.'}</p>
+                <p className="att-empty" style={{ padding: 4, textAlign: 'left' }}>{day.status === 'IN_PROGRESS' ? `Checked in at ${formatPunch(day.checkIn)}${day.progressLabel ? ` · ${day.progressLabel}` : ''}. Check-out is still pending.` : day.status === 'ABSENT' && !day.checkIn ? 'No punch was recorded on a working day, so it counts as absent (1 day LOP) unless leave or a correction covers it.' : 'Nothing unusual on this day.'}</p>
               )}
               {(day.source || day.siteName) && <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--att-muted)', fontWeight: 700 }}><Icon name="Fingerprint" size={12} /> Source: {String(day.source || 'SYSTEM').replaceAll('_', ' ').toLowerCase()}{day.siteName ? ` · ${day.siteName}` : ''}</p>}
             </div>

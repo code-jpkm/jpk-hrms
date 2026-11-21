@@ -101,7 +101,7 @@ async function dailyBriefing({ tenantId, user, employee }) {
     const mine = todayRows.find((r) => String(r.employeeId) === String(employee._id));
     const balances = await LeaveBalance.find({ tenantId, employeeId: employee._id }).lean();
     Object.assign(facts, {
-      myCheckIn: mine?.checkIn ? new Date(mine.checkIn).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) : null,
+      myCheckIn: mine?.checkIn ? new Date(mine.checkIn).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : null,
       myLeaveBalance: balances.map((b) => ({ type: b.leaveType, available: Number(b.accrued || 0) + Number(b.manualAdjusted || 0) + Number(b.carriedForward || 0) - Number(b.used || 0) }))
     });
   }
