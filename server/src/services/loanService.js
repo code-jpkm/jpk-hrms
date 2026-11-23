@@ -91,8 +91,11 @@ async function loanStatements({ tenantId, employeeIds = null }) {
   }
   const rows = [];
   for (const [employeeId, list] of byEmployee) {
-    const slips = await SalarySlip.find({ tenantId, employeeId, month: { $gte: list[0].startMonth } })
-      .select('month deductions.loan').sort('month').lean();
+    // Loans saved by the earlier HRMS may have no first month; they recover nothing here.
+    const firstMonth = list.map((loan) => loan.startMonth).filter(Boolean).sort()[0];
+    const slips = firstMonth
+      ? await SalarySlip.find({ tenantId, employeeId, month: { $gte: firstMonth } }).select('month deductions.loan').sort('month').lean()
+      : [];
     const recovered = recoveredByLoan(list, slips);
     for (const loan of list) {
       const got = recovered.get(String(loan._id));
@@ -107,7 +110,7 @@ async function loanStatements({ tenantId, employeeIds = null }) {
       });
     }
   }
-  return rows.sort((a, b) => String(a.employeeId?.employeeCode || '').localeCompare(String(b.employeeId?.employeeCode || '')) || a.startMonth.localeCompare(b.startMonth));
+  return rows.sort((a, b) => String(a.employeeId?.employeeCode || '').localeCompare(String(b.employeeId?.employeeCode || '')) || String(a.startMonth || '').localeCompare(String(b.startMonth || '')));
 }
 
 module.exports = { loanInstalmentsFor, loanStatements, recoveredByLoan, runsIn };

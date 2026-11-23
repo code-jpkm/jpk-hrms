@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 /**
@@ -8,6 +9,9 @@ const mongoose = require('mongoose');
 const employeeLoanSchema = new mongoose.Schema({
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  // The loans collection already has a unique index on referenceNumber (salary
+  // advances "ADV-…" from the earlier HRMS), so every loan gets its own reference.
+  referenceNumber: { type: String, default: () => `LN-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}` },
   name: { type: String, default: 'Loan', trim: true, maxlength: 60 },
   // The loan given.
   amount: { type: Number, required: true, min: 0 },
