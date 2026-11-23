@@ -8,6 +8,8 @@ router.get('/policies', controller.policies);
 router.post('/policies', requireAbility('LEAVE', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.savePolicy);
 router.get('/grants', controller.grants);
 router.post('/grant', requireAbility('LEAVE', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.grant);
+router.get('/balances/template.xlsx', requireAbility('LEAVE', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.balanceTemplate);
+router.post('/balances/import-excel', requireAbility('LEAVE', 'MANAGE', 'SUPER_ADMIN', 'HR_ADMIN'), controller.importBalances);
 router.get('/balances', controller.balances);
 router.get('/requests', controller.requests);
 router.post('/apply', controller.apply);

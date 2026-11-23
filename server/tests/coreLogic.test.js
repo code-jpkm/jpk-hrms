@@ -1,6 +1,7 @@
 const assert = require('assert');
 const { statusFromWorkedMinutes, computeShiftWindow, minutesBetween } = require('../src/utils/shift');
-const { calculateSalary } = require('../src/utils/salary');
+const { calculateSalary, ptaxForGross } = require('../src/utils/salary');
+const { recoveredByLoan, runsIn } = require('../src/services/loanService');
 
 function at(hour, minute = 0) {
   return new Date(2026, 6, 1, hour, minute, 0, 0);
@@ -130,9 +131,68 @@ function testJpkSamplePayslipInWholeRupees() {
   assert.equal(exact.deductions.pf, 1137.6);
 }
 
+// JPK from Nov 2026, as in greytHR: PF on the full Basic, ESI 0.75% of Basic and none
+// above ₹21,000 Basic, P.Tax "up to" slabs on the month's gross.
+function testJpkStatutoryAsGreytHR() {
+  const rule = {
+    pf: { enabled: true, employeePercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: false },
+    esi: { enabled: true, employeePercent: 0.0075, grossCap: 21000, calculationBase: 'BASIC' },
+    ptax: { enabled: true, defaultAmount: 208, slabs: [{ from: 0, to: 20000, amount: 0 }, { from: 20001, to: 30000, amount: 100 }, { from: 30001, to: 50000, amount: 140 }, { from: 50001, to: 100000, amount: 170 }] }
+  };
+  const master = (basic, other) => ({ calculationMode: 'RULE_BASED_DEDUCTIONS', earnings: { basic, hra: 0, conveyance: 0, specialAllowance: other, otherEarnings: 0 }, grossSalary: basic + other, deductions: {} });
+  const full = { workingDays: 26, payableDays: 26 };
+  // greytHR October 2026: OFCM0002 Basic 39,367, gross 74,010 -> PF 4,724, no ESI, P.Tax 170.
+  let slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(39367, 34643) });
+  assert.deepEqual([slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax], [4724, 0, 170]);
+  // FAC0003 Basic 10,500, gross 15,599 -> PF 1,260, ESI 79, P.Tax 0.
+  slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(10500, 5099) });
+  assert.deepEqual([slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax], [1260, 79, 0]);
+  // Basic 22,000 agreed: no ESI even when loss of pay brings the earned Basic under 21,000.
+  slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 26, payableDays: 13 }, rule, salaryMaster: master(22000, 0) });
+  assert.equal(slip.basic, 11000);
+  assert.equal(slip.deductions.esi, 0);
+  // Basic exactly 21,000: ESI applies.
+  slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(21000, 9000) });
+  assert.equal(slip.deductions.esi, 158);
+  // The user's formula: IF(R<=20000,0,IF(R<=30000,100,IF(R<=50000,140,IF(R<=100000,170,208))))
+  for (const [gross, tax] of [[0, 0], [20000, 0], [20000.4, 100], [20001, 100], [30000, 100], [30000.5, 140], [50000, 140], [50001, 170], [100000, 170], [100000.01, 208], [250000, 208]]) {
+    assert.equal(ptaxForGross(gross, rule.ptax), tax, `P.Tax on ${gross}`);
+  }
+  // Older rules keep working: no slab matches -> the default amount.
+  assert.equal(ptaxForGross(45000, { defaultAmount: 200, slabs: [{ from: 0, to: 10000, amount: 0 }, { from: 10001, to: 40000, amount: 150 }] }), 200);
+}
+
+// Loans: the payslips' LOAN lines go to the oldest running loan first; a closed loan stops.
+function testLoanRecovery() {
+  const a = { _id: 'a', startMonth: '2026-11', balanceAtStart: 6000, emi: 2000, status: 'ACTIVE' };
+  const b = { _id: 'b', startMonth: '2026-12', balanceAtStart: 1000, emi: 500, status: 'ACTIVE' };
+  const slips = [{ month: '2026-11', deductions: { loan: 2000 } }, { month: '2026-12', deductions: { loan: 2500 } }, { month: '2027-01', deductions: { loan: 0 } }];
+  const got = recoveredByLoan([a, b], slips);
+  assert.equal(got.get('a'), 4000);
+  assert.equal(got.get('b'), 500);
+  // HR put 3,000 on the LOAN line in January: the extra 1,000 goes to the older loan.
+  const more = recoveredByLoan([a, b], [...slips.slice(0, 2), { month: '2027-01', deductions: { loan: 3000 } }]);
+  assert.equal(more.get('a'), 6000);
+  assert.equal(more.get('b'), 1000);
+  // HR lowered December's line to 2,000: the newer loan is the one left short.
+  const less = recoveredByLoan([a, b], [slips[0], { month: '2026-12', deductions: { loan: 2000 } }]);
+  assert.equal(less.get('a'), 4000);
+  assert.equal(less.get('b'), 0);
+  // A payslip before a loan starts never counts for it.
+  assert.equal(recoveredByLoan([b], [{ month: '2026-11', deductions: { loan: 900 } }]).get('b'), 0);
+  // More than is left on a loan is not counted twice.
+  assert.equal(recoveredByLoan([{ ...a, balanceAtStart: 1000 }], [{ month: '2026-11', deductions: { loan: 2000 } }]).get('a'), 1000);
+  const closed = { ...a, status: 'CLOSED', closedMonth: '2027-01' };
+  assert.equal(runsIn(closed, '2026-12'), true);
+  assert.equal(runsIn(closed, '2027-01'), false);
+  assert.equal(runsIn(a, '2026-10'), false);
+}
+
 testAttendanceClassification();
 testIndiaShiftWindowOnUtcServer();
 testShiftEditDoesNotKeepStaleFullDayThreshold();
 testSalaryProrationAndDeductions();
 testJpkSamplePayslipInWholeRupees();
+testJpkStatutoryAsGreytHR();
+testLoanRecovery();
 console.log('PASS: attendance classification and payroll calculation core tests');

@@ -161,7 +161,39 @@ function applyLopWaterfall({ components, lopAmount, rule }) {
   };
 }
 
-function calculateStatutoryDeductions({ employee, rule, salaryMaster }) {
+/**
+ * Professional tax for a month's gross. Each slab covers from–to (rupees, both
+ * included); a gross above every slab pays the rule's default amount
+ * ("above the last slab"). JPK from Nov 2026, as in greytHR:
+ *   up to 20,000 → 0 · up to 30,000 → 100 · up to 50,000 → 140 ·
+ *   up to 1,00,000 → 170 · above → 208
+ *
+ * Slabs typed in whole rupees (0–20,000 then 20,001–30,000) leave a one-rupee
+ * seam. A gross inside it (₹20,000.40 when paise are kept) is above the first
+ * limit, so it pays the next slab, as "IF(gross <= 20000, 0, …)" does.
+ */
+function ptaxForGross(gross, ptaxRule = {}) {
+  const amount = Number(gross || 0);
+  const slabs = (ptaxRule?.slabs || []).map((slab) => ({
+    from: Number(slab.from || 0),
+    to: Number(slab.to || Number.MAX_SAFE_INTEGER),
+    amount: Number(slab.amount || 0)
+  }));
+  const inside = slabs.find((slab) => amount >= slab.from && amount <= slab.to);
+  if (inside) return inside.amount;
+  const sorted = [...slabs].sort((a, b) => a.from - b.from);
+  const seam = sorted.find((slab, i) => i > 0 && amount > sorted[i - 1].to && amount < slab.from && slab.from - sorted[i - 1].to <= 1);
+  if (seam) return seam.amount;
+  return Number(ptaxRule?.defaultAmount || 0);
+}
+
+/**
+ * `contract` is the monthly salary agreed ({ basic, gross }, before loss of
+ * pay). The ESI limit is checked on it when ESI is on Basic: a Basic agreed
+ * above ₹21,000 means no ESI, even in a month where LOP brings the earned Basic
+ * below the limit. Without it, the master's own figures are used.
+ */
+function calculateStatutoryDeductions({ employee, rule, salaryMaster, contract }) {
   const r = rounderFor(rule);
   if (salaryMaster?.calculationMode !== 'RULE_BASED_DEDUCTIONS') {
     const manual = masterDeductions(salaryMaster);
@@ -195,10 +227,15 @@ function calculateStatutoryDeductions({ employee, rule, salaryMaster }) {
     ? 0
     : pfBase * asPercent(pfRule.employeePercent, 0.12, { unit, maxFraction: 0.5, label: 'PF employee percent' });
 
-  const esiRawBase = esiRule.calculationBase === 'BASIC' ? basic : gross;
+  // ESI on Basic (JPK, as in greytHR): 0.75% of the earned Basic, and no ESI
+  // when the monthly Basic is above the limit. ESI on Gross keeps the earlier
+  // check on the month's gross.
+  const esiOnBasic = esiRule.calculationBase === 'BASIC';
+  const esiRawBase = esiOnBasic ? basic : gross;
+  const esiLimitBase = esiOnBasic ? Number(contract?.basic ?? basic) : gross;
   const esiApplicable = employee?.statutory?.esiApplicable !== false
     && esiRule.enabled !== false
-    && (!esiRule.grossCap || gross <= Number(esiRule.grossCap));
+    && (!esiRule.grossCap || esiLimitBase <= Number(esiRule.grossCap));
   const esi = esiApplicable
     ? esiRawBase * asPercent(esiRule.employeePercent, 0.0075, { unit, maxFraction: 0.1, label: 'ESI employee percent' })
     : 0;
@@ -207,9 +244,7 @@ function calculateStatutoryDeductions({ employee, rule, salaryMaster }) {
   // No salary earned means no professional tax: a fully-LOP month used to end
   // with a negative net pay of -₹200.
   if (gross > 0 && ptaxRule.enabled !== false && employee?.statutory?.ptaxApplicable !== false) {
-    const slabs = ptaxRule.slabs || [];
-    const matched = slabs.find((slab) => gross >= Number(slab.from || 0) && gross <= Number(slab.to || Number.MAX_SAFE_INTEGER));
-    ptax = matched ? Number(matched.amount || 0) : Number(ptaxRule.defaultAmount || 0);
+    ptax = ptaxForGross(gross, ptaxRule);
   }
 
   const custom = {};
@@ -292,7 +327,12 @@ function calculateSalary({ employee, attendanceStats, rule, salaryMaster }) {
   };
 
   const extraEarnings = calculateCustomEarnings({ employee: employeeForCalc, rule, salaryMaster: proratedMaster });
-  const deductions = calculateStatutoryDeductions({ employee: employeeForCalc, rule, salaryMaster: proratedMaster });
+  const deductions = calculateStatutoryDeductions({
+    employee: employeeForCalc,
+    rule,
+    salaryMaster: proratedMaster,
+    contract: { basic: Number(totals.earnings.basic || 0), gross }
+  });
   const netPay = roundMoney(proratedGross + extraEarnings.total - deductions.total);
 
   return {
@@ -327,6 +367,7 @@ module.exports = {
   rounderFor,
   calculateSalary,
   calculateStatutoryDeductions,
+  ptaxForGross,
   applyLopWaterfall,
   resolveWaterfall,
   roundMoney,

@@ -21,6 +21,7 @@ const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, hol
 const { calculateSalary, roundMoney } = require('../utils/salary');
 const { calculatedFromEngine, applySlipEdits } = require('./payslipModel');
 const { getActiveSalaryMastersMap } = require('./salaryMasterService');
+const { loanInstalmentsFor } = require('./loanService');
 
 async function attendanceStatsFor(employee, month, tenantId) {
   const { from, to } = monthRange(month);
@@ -162,7 +163,10 @@ async function attendanceStatsFor(employee, month, tenantId) {
 async function buildSlip({ tenantId, run, employee, month, rule, salaryMaster, adjustment, previous }) {
   const stats = await attendanceStatsFor(employee, month, tenantId);
   const calc = calculateSalary({ employee, attendanceStats: stats, rule, salaryMaster });
-  const calculated = calculatedFromEngine(calc);
+  // Loan instalments come off after PF / ESI / P.Tax, up to the net pay left.
+  const beforeLoan = calculatedFromEngine(calc);
+  const loans = await loanInstalmentsFor({ tenantId, employeeId: employee._id, month, room: beforeLoan.netPay });
+  const calculated = loans.total ? calculatedFromEngine(calc, { loan: loans.total, loans: loans.lines }) : beforeLoan;
   const edits = previous?.edits || null;
   const paid = applySlipEdits(calculated, edits, edits ? null : (previous?.manualAdjustments || adjustment || null));
   const changed = !previous || !Number.isFinite(Number(previous.netPay)) || Math.abs(Number(previous.netPay) - paid.netPay) >= 0.005;

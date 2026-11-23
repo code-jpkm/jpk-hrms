@@ -131,3 +131,19 @@
 .pa-role{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--jpk-muted)}
 .pa-role select{min-width:130px}
 .pa-note{margin:0;font-size:12.5px;color:var(--jpk-muted)}
+
+/* People page: what an Excel import did. */
+.import-result{margin:0 0 16px;padding:14px 16px;border:1px solid #E1E1E4;border-radius:12px;background:#FFFFFF;font-size:13px}
+.import-result-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.import-result-head b{display:block;color:#1F3445;font-size:14px}
+.import-result-head span{display:block;color:#3D3D41;margin-top:2px}
+.import-result-head button{flex:none}
+.import-result-list{margin-top:10px;padding:10px 12px;border-radius:10px;max-height:260px;overflow:auto}
+.import-result-list p{margin:0 0 6px;font-weight:700}
+.import-result-list ul{margin:0;padding-left:18px}
+.import-result-list li{margin:3px 0;line-height:1.4}
+.import-result-list.bad{background:#FDF1F0;border:1px solid #F3C6C1}
+.import-result-list.bad p{color:#A23B2D}
+.import-result-list.warn{background:#FFF8EB;border:1px solid #F1DDB0}
+.import-result-list.warn p{color:#8A5A00}
+.import-result-ok{margin:8px 0 0;color:#2E6B4F;font-weight:600}

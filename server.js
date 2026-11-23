@@ -44,6 +44,10 @@ async function main() {
   await require('./server/src/services/loginAccessService').applyAdminPasswordFromEnv()
     .catch((error) => console.error('[login] ADMIN_PASSWORD could not be applied:', error.message));
 
+  // One-time updates (each runs once, e.g. the Nov 2026 PF / ESI / P.Tax rules).
+  await require('./server/src/services/startupUpdates').runStartupUpdates()
+    .catch((error) => console.error('[startup] one-time updates failed:', error.message));
+
   const api = require('./server/src/app');
   const server = http.createServer();
   const nextApp = next({ dev, dir: __dirname, hostname, port, httpServer: server });

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { auth, requireRoles, requireAbility } = require('../middleware/auth');
 const controller = require('../controllers/payrollController');
+const loans = require('../controllers/loanController');
 
 router.get('/public/slips/:id/pdf', controller.publicSlipPdf);
 
@@ -15,6 +16,12 @@ router.get('/salary-masters', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', '
 router.post('/salary-masters', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), controller.upsertSalaryMaster);
 router.post('/salary-masters/bulk', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), controller.bulkUpsertSalaryMasters);
 router.delete('/salary-masters/:id', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), controller.deleteSalaryMaster);
+// Loans and salary advances: the EMI comes off the payslip every month.
+router.get('/loans', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), loans.list);
+router.get('/loans/template.xlsx', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), loans.template);
+router.post('/loans/import-excel', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), loans.importExcel);
+router.post('/loans', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), loans.save);
+router.post('/loans/:id/close', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER', 'SUPER_ADMIN', 'HR_ADMIN'), loans.close);
 router.get('/runs', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.runs);
 router.post('/run', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.runPayroll);
 router.post('/runs/:runId/release', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.releaseRun);

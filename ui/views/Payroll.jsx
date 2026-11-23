@@ -2,6 +2,8 @@ import { currentMonthKey, monthLabel } from '../utils/time.js';
 import { PayrollReview, ExplainSlip } from './payroll/PayrollAi.jsx';
 import SendPayslips from './payroll/SendPayslips.jsx';
 import PayslipEditor from './payroll/PayslipEditor.jsx';
+import Loans from './payroll/Loans.jsx';
+import ImportResult from '../components/ImportResult.jsx';
 import Icon from '../components/Icon.jsx';
 import '../styles/attendance.css';
 import '../styles/v26.css';
@@ -33,6 +35,18 @@ function fileToDataUrl(file) {
 
 function pct(value, fallback=0) { const n=Number(value ?? fallback); return n > 1 ? n/100 : n; }
 
+// Professional tax for a gross, as the payroll engine works it out (ptaxForGross in
+// server/src/utils/salary.js): slabs are "gross up to" limits, above the last slab pays the default.
+function ptaxFor(gross, ptax = {}) {
+  const amount = Number(gross || 0);
+  const slabs = (ptax.slabs || []).map((s) => ({ from: Number(s.from || 0), to: Number(s.to || Number.MAX_SAFE_INTEGER), amount: Number(s.amount || 0) }));
+  const inside = slabs.find((s) => amount >= s.from && amount <= s.to);
+  if (inside) return inside.amount;
+  const sorted = [...slabs].sort((a, b) => a.from - b.from);
+  const seam = sorted.find((s, i) => i > 0 && amount > sorted[i - 1].to && amount < s.from && s.from - sorted[i - 1].to <= 1);
+  return seam ? seam.amount : Number(ptax.defaultAmount || 0);
+}
+
 export default function Payroll() {
   const { user } = useAuth();
   const canReadPayrollAdmin = hasAbility(user, 'PAYROLL', 'READ');
@@ -49,7 +63,7 @@ export default function Payroll() {
   const { data: rulesData, error: rulesError, reload: reloadRules } = useApi(canReadPayrollAdmin ? '/payroll/rules' : '', [canReadPayrollAdmin]);
   const { data: employeesData, error: employeesError } = useApi(canReadPayrollAdmin ? '/payroll/employees' : '', [canReadPayrollAdmin]);
   const { data: salaryMastersData, error: salaryMastersError, reload: reloadSalaryMasters } = useApi(canReadPayrollAdmin ? `/payroll/salary-masters?activeAt=${month}` : '', [month, canReadPayrollAdmin]);
-  const [payRule, setPayRule] = useState({ name: 'Default Payroll Rule', pf: { enabled: true, employeePercent: 0.12, employerPercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: true }, esi: { enabled: true, employeePercent: 0.0075, employerPercent: 0.0325, grossCap: 21000, calculationBase: 'GROSS' }, ptax: { enabled: true, defaultAmount: 200, slabs: [] }, customEarnings: [], customDeductions: [], notes: '' });
+  const [payRule, setPayRule] = useState({ name: 'Default Payroll Rule', pf: { enabled: true, employeePercent: 0.12, employerPercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: false }, esi: { enabled: true, employeePercent: 0.0075, employerPercent: 0.0325, grossCap: 21000, calculationBase: 'BASIC' }, ptax: { enabled: true, defaultAmount: 208, slabs: [{ from: 0, to: 20000, amount: 0 }, { from: 20001, to: 30000, amount: 100 }, { from: 30001, to: 50000, amount: 140 }, { from: 50001, to: 100000, amount: 170 }] }, customEarnings: [], customDeductions: [], notes: '' });
   const [template, setTemplate] = useState(defaultTemplate);
   const [sendOpen, setSendOpen] = useState(false);
   const [editingSlip, setEditingSlip] = useState('');
@@ -59,6 +73,7 @@ export default function Payroll() {
   const [releasedMonth, setReleasedMonth] = useState('');
   const [revealedMasters, setRevealedMasters] = useState([]);
   const [revealedSlips, setRevealedSlips] = useState([]);
+  const [salaryImport, setSalaryImport] = useState(null);
 
   useEffect(() => {
     if (templateData?.template) setTemplate({ ...defaultTemplate, ...templateData.template });
@@ -80,8 +95,8 @@ export default function Payroll() {
   const roundPay = (v) => (payRule.roundToRupee === false ? Math.round(v * 100) / 100 : Math.round(v));
   const autoPf = payRule.pf?.enabled === false || salaryEmployee?.statutory?.pfApplicable === false ? 0 : roundPay(autoPfCapped * pct(payRule.pf?.employeePercent, .12));
   const autoEsiBase = payRule.esi?.calculationBase === 'BASIC' ? Number(salaryMaster.earnings.basic || 0) : salaryGross;
-  const autoEsi = payRule.esi?.enabled === false || salaryEmployee?.statutory?.esiApplicable === false || (payRule.esi?.grossCap && salaryGross > Number(payRule.esi.grossCap)) ? 0 : roundPay(autoEsiBase * pct(payRule.esi?.employeePercent, .0075));
-  const autoPtax = payRule.ptax?.enabled === false || salaryEmployee?.statutory?.ptaxApplicable === false ? 0 : Number((payRule.ptax?.slabs || []).find((x)=>salaryGross >= Number(x.from||0) && salaryGross <= Number(x.to||Number.MAX_SAFE_INTEGER))?.amount ?? payRule.ptax?.defaultAmount ?? 0);
+  const autoEsi = payRule.esi?.enabled === false || salaryEmployee?.statutory?.esiApplicable === false || (payRule.esi?.grossCap && autoEsiBase > Number(payRule.esi.grossCap)) ? 0 : roundPay(autoEsiBase * pct(payRule.esi?.employeePercent, .0075));
+  const autoPtax = payRule.ptax?.enabled === false || salaryEmployee?.statutory?.ptaxApplicable === false || salaryGross <= 0 ? 0 : ptaxFor(salaryGross, payRule.ptax);
   const autoNet = salaryGross - autoPf - autoEsi - autoPtax - Number(salaryMaster.deductions.otherDeductions || 0);
   const currentRun = useMemo(() => (runs?.runs || []).find((r) => r.month === month), [runs, month]);
   // Days with a missing out time are paid as present until HR decides them on the attendance calendar.
@@ -138,7 +153,7 @@ export default function Payroll() {
   async function importSalaryExcel(e) {
     const file=e.target.files?.[0]; if(!file) return;
     setError(null); setMessage('');
-    try { const dataUrl=await fileToDataUrl(file); const res=await post('/payroll/salary-masters/import-excel',{fileName:file.name,dataUrl}); setMessage(`Salary Excel import complete: ${res.saved || 0} saved${res.errors ? `, ${res.errors} error(s)` : ''}. PF, ESI and P.Tax were calculated automatically.`); reloadSalaryMasters(); }
+    try { const dataUrl=await fileToDataUrl(file); const res=await post('/payroll/salary-masters/import-excel',{fileName:file.name,dataUrl}); setSalaryImport({ fileName: file.name, ...res }); setMessage(`Salary Excel import complete: ${res.saved || 0} saved${res.errors ? `, ${res.errors} error(s)` : ''}. PF, ESI and P.Tax were calculated automatically.`); reloadSalaryMasters(); }
     catch(err){ setError(err); } finally { e.target.value=''; }
   }
 
@@ -261,10 +276,13 @@ export default function Payroll() {
         </div>
         <div className="statutory-preview v24"><div><span>Gross</span><b>{money(salaryGross)}</b></div><div><span>PF · auto</span><b>{money(autoPf)}</b></div><div><span>ESI · auto</span><b>{money(autoEsi)}</b></div><div><span>P.Tax · auto</span><b>{money(autoPtax)}</b></div><div className="accent"><span>Estimated net</span><b>{money(autoNet)}</b></div></div>
         <div className="salary-editor-actions"><button className="primary" onClick={saveSalaryMaster} disabled={!salaryMaster.employeeId}>Save salary master</button><button type="button" onClick={downloadSalaryTemplate}>Download Excel template</button><label className="file-button">Upload salary Excel<input type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={importSalaryExcel}/></label></div>
+        {salaryImport && <ImportResult title={`Salary Excel · ${salaryImport.fileName}`} facts={[`${salaryImport.saved || 0} saved`, 'PF, ESI and P.Tax worked out by the HRMS']} errors={(salaryImport.results || []).filter((r) => r.status === 'ERROR').map((r) => ({ row: r.row, employeeCode: r.employeeCode, message: r.reason }))} onClose={() => setSalaryImport(null)} />}
 
         <div className="salary-master-list-head"><div><small>ACTIVE AT {month}</small><h3>Employee salary structures</h3><p>Values are private by default. Use the eye on an employee to reveal only that salary.</p></div><span>{salaryMasters.length} employee{salaryMasters.length===1?'':'s'}</span></div>
         {!salaryMasters.length ? <Empty /> : <div className="private-salary-list">{salaryMasters.map((m)=>{const open=revealedMasters.includes(m._id);return <article key={m._id} className={open?'revealed':''}><div className="private-salary-row"><div className="salary-person"><span className="employee-mini-avatar">{`${m.employeeId?.firstName?.[0]||''}${m.employeeId?.lastName?.[0]||''}`}</span><div><b>{m.employeeId?.firstName} {m.employeeId?.lastName||''}</b><small>{m.employeeId?.employeeCode} · effective {m.effectiveMonth}</small></div></div><div className="salary-private-state"><span>{open?money(m.netSalary):'••••••'}</span><button aria-label={open?'Hide salary':'Show salary'} onClick={()=>toggleRevealMaster(m._id)}>{open?'◉':'◌'} <b>{open?'Hide':'View'}</b></button></div></div>{open&&<div className="salary-reveal-panel"><div><span>Basic</span><b>{money(m.earnings?.basic)}</b></div><div><span>HRA</span><b>{money(m.earnings?.hra)}</b></div><div><span>Conveyance</span><b>{money(m.earnings?.conveyance)}</b></div><div><span>Special</span><b>{money(m.earnings?.specialAllowance)}</b></div><div><span>Gross</span><b>{money(m.grossSalary)}</b></div><div><span>PF</span><b>{money(m.deductions?.pf)}</b></div><div><span>ESI</span><b>{money(m.deductions?.esi)}</b></div><div><span>P.Tax</span><b>{money(m.deductions?.ptax)}</b></div><div className="accent"><span>Net</span><b>{money(m.netSalary)}</b></div><div className="salary-reveal-actions"><button onClick={()=>editSalaryMaster(m)}>Edit</button><button className="danger-text" onClick={()=>deleteSalaryMaster(m._id)}>Delete</button></div></div>}</article>})}</div>}
       </div></details>}
+
+      {canReadPayrollAdmin && <details className="premium-collapsible"><summary><div><small>LOANS</small><b>Loans and salary advances</b><span>The EMI comes off the payslip every month until the loan is recovered.</span></div><em>Open</em></summary><div className="collapsible-body"><Loans employees={employees} canEdit={canUpdateSalaryMaster} onChanged={reloadSlips} /></div></details>}
 
       {canUpdateRules && <details className="premium-collapsible"><summary><div><small>STATUTORY RULES</small><b>PF / ESI / Professional Tax configuration</b><span>Advanced payroll settings remain closed until needed.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="form-grid">
         <Field label="Rule name"><input value={payRule.name || ''} onChange={(e) => setRule('name', e.target.value)} /></Field>
@@ -273,15 +291,16 @@ export default function Payroll() {
         <Field label="PF employer percent"><input type="number" step="0.0001" value={payRule.pf?.employerPercent || 0} onChange={(e) => setRule('pf.employerPercent', Number(e.target.value))} /></Field>
         <Field label="PF wage cap"><input type="number" value={payRule.pf?.wageCap || 0} onChange={(e) => setRule('pf.wageCap', Number(e.target.value))} /></Field>
         <Field label="PF base"><select value={payRule.pf?.calculationBase || 'BASIC'} onChange={(e) => setRule('pf.calculationBase', e.target.value)}><option>BASIC</option><option>GROSS</option></select></Field>
+        <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.pf?.applyWageCap === false} onChange={(e) => setRule('pf.applyWageCap', !e.target.checked)} /><span><b>PF on the full Basic</b><small>On: 12% of the whole Basic, as in greytHR. Off: PF stops at the wage cap.</small></span></label>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.esi?.enabled !== false} onChange={(e) => setRule('esi.enabled', e.target.checked)} /><span><b>ESI enabled</b></span></label>
         <Field label="ESI employee percent"><input type="number" step="0.0001" value={payRule.esi?.employeePercent || 0} onChange={(e) => setRule('esi.employeePercent', Number(e.target.value))} /></Field>
         <Field label="ESI employer percent"><input type="number" step="0.0001" value={payRule.esi?.employerPercent || 0} onChange={(e) => setRule('esi.employerPercent', Number(e.target.value))} /></Field>
-        <Field label="ESI gross cap"><input type="number" value={payRule.esi?.grossCap || 0} onChange={(e) => setRule('esi.grossCap', Number(e.target.value))} /></Field>
+        <Field label="ESI on"><select value={payRule.esi?.calculationBase || 'GROSS'} onChange={(e) => setRule('esi.calculationBase', e.target.value)}><option value="BASIC">Basic</option><option value="GROSS">Gross</option></select></Field>
+        <Field label={payRule.esi?.calculationBase === 'BASIC' ? 'No ESI when Basic is above' : 'No ESI when gross is above'}><input type="number" value={payRule.esi?.grossCap || 0} onChange={(e) => setRule('esi.grossCap', Number(e.target.value))} /></Field>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.ptax?.enabled !== false} onChange={(e) => setRule('ptax.enabled', e.target.checked)} /><span><b>P.Tax enabled</b></span></label>
-        <Field label="Default P.Tax"><input type="number" value={payRule.ptax?.defaultAmount || 0} onChange={(e) => setRule('ptax.defaultAmount', Number(e.target.value))} /></Field>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.roundToRupee !== false} onChange={(e) => setRule('roundToRupee', e.target.checked)} /><span><b>Whole rupees</b><small>Round LOP, salary parts and PF / ESI to the rupee, like the JPK payslip</small></span></label>
         <Field label="Change reason"><input value={payRule.notes || ''} onChange={(e) => setRule('notes', e.target.value)} /></Field>
-      </div><details className="details-block"><summary>Advanced custom earnings / deduction JSON</summary><Field label="Custom earnings"><textarea rows="4" value={JSON.stringify(payRule.customEarnings || [], null, 2)} onChange={(e) => { try { setRule('customEarnings', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="Custom deductions"><textarea rows="4" value={JSON.stringify(payRule.customDeductions || [], null, 2)} onChange={(e) => { try { setRule('customDeductions', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="P.Tax slabs"><textarea rows="4" value={JSON.stringify(payRule.ptax?.slabs || [], null, 2)} onChange={(e) => { try { setRule('ptax.slabs', JSON.parse(e.target.value)); } catch (_) {} }} /></Field></details><button className="primary" onClick={savePayRule}>Save payroll rule</button></div></details>}
+      </div><PtaxSlabEditor ptax={payRule.ptax || {}} onChange={(next) => setRule('ptax', next)} /><details className="details-block"><summary>Advanced custom earnings / deduction JSON</summary><Field label="Custom earnings"><textarea rows="4" value={JSON.stringify(payRule.customEarnings || [], null, 2)} onChange={(e) => { try { setRule('customEarnings', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="Custom deductions"><textarea rows="4" value={JSON.stringify(payRule.customDeductions || [], null, 2)} onChange={(e) => { try { setRule('customDeductions', JSON.parse(e.target.value)); } catch (_) {} }} /></Field></details><button className="primary" onClick={savePayRule}>Save payroll rule</button></div></details>}
 
       {canUpdateTemplate && <details className="premium-collapsible"><summary><div><small>PAYSLIP DESIGN</small><b>Payslip PDF</b><span>Company heading, footer line and what the payslip shows.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="form-grid"><Field label="Template name"><input value={template.name || ''} onChange={(e) => setTemplateValue('name', e.target.value)} /></Field><Field label="Company name" hint="Empty: the company name from Settings."><input value={template.companyName || ''} onChange={(e) => setTemplateValue('companyName', e.target.value)} /></Field><Field label="Company address" hint="Printed under the company name. Empty: the office address."><textarea value={template.companyAddress || ''} onChange={(e) => setTemplateValue('companyAddress', e.target.value)} /></Field><Field label="Footer line"><textarea value={template.footerText || ''} onChange={(e) => setTemplateValue('footerText', e.target.value)} /></Field><Field label="Bank account number"><select value={template.bankAccountDisplay || 'FULL'} onChange={(e) => setTemplateValue('bankAccountDisplay', e.target.value)}><option value="FULL">Full number</option><option value="LAST4">Only the last 4 digits</option><option value="HIDE">Do not show</option></select></Field><label className="switch-row compact-switch"><input type="checkbox" checked={template.showPfEsiNumbers !== false} onChange={(e) => setTemplateValue('showPfEsiNumbers', e.target.checked)} /><span><b>Show PF No. and UAN</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={template.showAttendanceSummary !== false} onChange={(e) => setTemplateValue('showAttendanceSummary', e.target.checked)} /><span><b>Show work days and LOP</b></span></label></div><button className="primary" onClick={saveTemplate}>Save PDF format</button></div></details>}
 
@@ -293,4 +312,34 @@ export default function Payroll() {
       {editingSlip && <PayslipEditor slipId={editingSlip} canEdit={canAdjustPayslips} onClose={() => setEditingSlip('')} onSaved={() => { reloadSlips(); reloadRuns(); }} />}
     </div>
   );
+}
+
+/** Professional tax slabs as "gross up to → tax" rows, plus the tax above the last slab. */
+function PtaxSlabEditor({ ptax, onChange }) {
+  const slabs = ptax.slabs || [];
+  const rupees = (v) => `₹${Number(v || 0).toLocaleString('en-IN')}`;
+  const limit = (s) => (s?.to === '' || s?.to === null || s?.to === undefined ? '' : Number(s.to));
+  // Each slab starts a rupee above the one before, as greytHR's "IF(gross <= limit…)" reads.
+  const save = (list) => onChange({ ...ptax, slabs: list.map((s, i) => ({ from: i === 0 ? 0 : Number(limit(list[i - 1]) || 0) + 1, to: limit(s), amount: Number(s.amount || 0) })) });
+  const setRow = (i, key, value) => save(slabs.map((s, j) => (j === i ? { ...s, [key]: value === '' ? '' : Number(value) } : s)));
+  const inOrder = () => save([...slabs].sort((a, b) => Number(limit(a) || Number.MAX_SAFE_INTEGER) - Number(limit(b) || Number.MAX_SAFE_INTEGER)));
+  const last = slabs.length ? Number(limit(slabs[slabs.length - 1]) || 0) : 0;
+  return <div className="ptax-slabs">
+    <div className="ptax-slabs-head"><b>Professional tax slabs</b><span>On the month's gross. Each row: gross up to the limit pays that tax.</span></div>
+    {slabs.map((s, i) => <div className="ptax-slab-row" key={i}>
+      <span>{i === 0 ? 'Gross up to' : `${rupees(Number(limit(slabs[i - 1]) || 0) + 1)} up to`}</span>
+      <input type="number" min="0" aria-label={`Slab ${i + 1}: gross up to`} value={limit(s)} onChange={(e) => setRow(i, 'to', e.target.value)} onBlur={inOrder} />
+      <span>tax ₹</span>
+      <input type="number" min="0" aria-label={`Slab ${i + 1}: tax`} value={s.amount ?? 0} onChange={(e) => setRow(i, 'amount', e.target.value)} />
+      <button type="button" onClick={() => save(slabs.filter((_, j) => j !== i))}>Remove</button>
+    </div>)}
+    <div className="ptax-slab-row above">
+      <span>{slabs.length ? `Above ${rupees(last)}` : 'Any gross'}</span>
+      <span />
+      <span>tax ₹</span>
+      <input type="number" min="0" aria-label="Tax above the last slab" value={ptax.defaultAmount ?? 0} onChange={(e) => onChange({ ...ptax, defaultAmount: Number(e.target.value || 0) })} />
+      <span />
+    </div>
+    <button type="button" className="ptax-add" onClick={() => save([...slabs, { to: last + 10000, amount: 0 }])}>Add slab</button>
+  </div>;
 }

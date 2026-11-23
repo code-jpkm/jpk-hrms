@@ -14,6 +14,7 @@ const { dateKey, semanticDateKey, companyToday } = require('../utils/date');
 const { hasAbility } = require('../middleware/auth');
 const guard = require('../services/accountGuardService');
 const loginAccess = require('../services/loginAccessService');
+const adms = require('../services/admsService');
 
 
 function reviewMissingFields(employee) {
@@ -149,8 +150,17 @@ function normalizeExcelEmployeeRow(row, { date1904 = false } = {}) {
     },
     createLogin: parseBoolean(firstPresent(row.createLogin, row['Create Login']), false),
     sendWelcome: false,
+    // Attendance-machine ID (fingerprint / card number), probation end and reporting line.
+    machineId: cellText(row.machineId, row['Machine ID'], row['Fingerprint ID'], row['Biometric ID'], row['Device User ID']).replace(/[^\w-]/g, '').slice(0, 24),
+    confirmationDate: excelDate(firstPresent(row.confirmationDate, row['Confirmation Date'], row['Probation End Date']), 'Confirmation Date', dateErrors, date1904),
+    managerCode: cellText(row.managerCode, row['Reporting Manager Code'], row['Manager Code']),
     dateErrors
   };
+}
+
+/** "Sk. Sahabul  ALI" -> "sk sahabul ali": how two spellings of one person's name are compared. */
+function nameKey(...parts) {
+  return parts.join(' ').toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // v26: the list hid only `salary`; bank accounts, Aadhaar and PAN went to every
@@ -306,7 +316,7 @@ exports.bulkUpsertEmployees = asyncHandler(async (req, res) => {
 
 
 exports.employeeImportTemplate = asyncHandler(async (req, res) => {
-  const headers = ['Employee Code','First Name','Last Name','Email','Phone','Department','Designation','Work Location','Employee Category','Date of Joining','Date of Birth','Status','WFH Allowed','PF Applicable','ESI Applicable','PTax Applicable','UAN','ESI Number','PAN','Create Login'];
+  const headers = ['Employee Code','First Name','Last Name','Email','Phone','Department','Designation','Work Location','Employee Category','Date of Joining','Date of Birth','Status','WFH Allowed','PF Applicable','ESI Applicable','PTax Applicable','UAN','ESI Number','PAN','Create Login','Machine ID','Confirmation Date','Reporting Manager Code'];
   const buffer = workbookBuffer({
     sheetName: 'Employees', headers,
     instructions: [
@@ -316,6 +326,9 @@ exports.employeeImportTemplate = asyncHandler(async (req, res) => {
       'WFH Allowed: YES only for employees who are permitted to request Work From Home. Blank/NO keeps WFH hidden.',
       'For existing Employee Code rows, upload updates the employee instead of creating a duplicate.',
       'Create Login can be YES/NO. Login is never created without an email.',
+      'Machine ID: the person\'s ID on the attendance machine (fingerprint / card number). Their machine punches count from then on.',
+      'Confirmation Date: for Status PROBATION, the day probation ends. Reporting Manager Code: the Employee Code of the person they report to.',
+      'A new Employee Code whose name already belongs to someone in the HRMS is not added a second time; use that person\'s code to update them.',
       'The seed never creates dummy employees; use this file for real employee migration.'
     ]
   });
@@ -329,24 +342,67 @@ exports.importEmployeesExcel = asyncHandler(async (req, res) => {
   const sheet = readWorkbookRows(req.body.dataUrl, { raw: true });
   const rows = sheet.map((row) => normalizeExcelEmployeeRow(row, { date1904: sheet.date1904 })).filter((row) => row.employeeCode || row.firstName);
   if (!rows.length) throw new ApiError(400, 'No employee rows found in the first Excel sheet');
-  const results = { created: 0, updated: 0, errors: [] };
+  const results = { created: 0, updated: 0, errors: [], warnings: [], machineIdsLinked: 0, managersSet: 0, skippedSameName: 0 };
+  // Everyone already in the HRMS, by name, so a second code for the same person is not created.
+  const byName = new Map();
+  const known = await Employee.find({ tenantId: req.tenantId, status: { $ne: 'OFFBOARDED' } }).select('employeeCode firstName lastName').lean();
+  for (const e of known) byName.set(nameKey(e.firstName, e.lastName), e);
+  const managerLinks = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
+    const rowNo = index + 2;
     try {
       if (!row.employeeCode || !row.firstName) throw new Error('Employee Code and First Name are required');
       if (!['OFFICE','FACTORY','BOTH'].includes(row.workLocation)) throw new Error('Work Location is required and must be OFFICE, FACTORY or BOTH');
       if (!['SALARIED','WAGES'].includes(row.employeeCategory)) throw new Error('Employee Category must be SALARIED or WAGES');
       if (row.dateErrors.length) throw new Error(row.dateErrors.join('; '));
-      const { dateErrors, ...rowValues } = row;
-      const { employee } = await upsertImportedEmployee(req, compactExcelPayload(rowValues))
-        .then((outcome) => { if (outcome.created) results.created += 1; else results.updated += 1; return outcome; });
+      const { dateErrors, machineId, confirmationDate, managerCode, ...rowValues } = row;
+      const key = nameKey(rowValues.firstName, rowValues.lastName);
+      if (!(await Employee.exists({ tenantId: req.tenantId, employeeCode: row.employeeCode }))) {
+        const same = byName.get(key);
+        if (same && same.employeeCode !== row.employeeCode) {
+          results.skippedSameName += 1;
+          throw new Error(`Already in the HRMS as ${same.employeeCode} (${[same.firstName, same.lastName].filter(Boolean).join(' ')}), so not added again. Use ${same.employeeCode} as the Employee Code to update that person.`);
+        }
+      }
+      if (rowValues.status === 'PROBATION' && confirmationDate) rowValues.probation = { enabled: true, endDate: confirmationDate, status: 'RUNNING' };
+      else if (rowValues.status === 'CONFIRMED') rowValues.probation = { status: 'CONFIRMED' };
+      const { employee, created } = await upsertImportedEmployee(req, compactExcelPayload(rowValues));
+      if (created) results.created += 1; else results.updated += 1;
+      byName.set(key, { employeeCode: employee.employeeCode, firstName: employee.firstName, lastName: employee.lastName });
       if (row.createLogin && employee.email && !employee.userId) {
         const user = await guard.resolveLoginForEmployee({ actor: req.user, tenantId: req.tenantId, employee, email: employee.email, phone: employee.phone, name: fullNameOf(employee) });
         employee.userId = user._id;
         await employee.save();
       }
+      if (machineId) {
+        const holder = await Employee.findOne({ tenantId: req.tenantId, 'biometric.deviceUserId': machineId, _id: { $ne: employee._id }, status: { $ne: 'OFFBOARDED' } })
+          .select('employeeCode firstName lastName').lean();
+        if (holder) {
+          results.warnings.push({ row: rowNo, employeeCode: row.employeeCode, message: `Machine ID ${machineId} already belongs to ${holder.employeeCode} ${[holder.firstName, holder.lastName].filter(Boolean).join(' ')}; not changed` });
+        } else if (employee.biometric?.deviceUserId !== machineId) {
+          // Same as linking on the machines page: punches already received for this ID move to this person.
+          await adms.linkMachineId({ tenantId: req.tenantId, pin: machineId, employeeId: employee._id });
+          results.machineIdsLinked += 1;
+        }
+      }
+      if (managerCode && managerCode !== row.employeeCode) managerLinks.push({ rowNo, employeeCode: row.employeeCode, employeeId: employee._id, managerCode });
     } catch (error) {
-      results.errors.push({ row: index + 2, employeeCode: row.employeeCode, message: error.message });
+      results.errors.push({ row: rowNo, employeeCode: row.employeeCode, message: error.message });
+    }
+  }
+  // Reporting lines last, so a manager further down the sheet is already in the HRMS.
+  for (const link of managerLinks) {
+    try {
+      const manager = await Employee.findOne({ tenantId: req.tenantId, employeeCode: link.managerCode }).select('_id').lean();
+      if (!manager) throw new Error(`Reporting manager ${link.managerCode} is not in the HRMS`);
+      const current = await Employee.findById(link.employeeId).select('reportsTo').lean();
+      if (String(current?.reportsTo || '') === String(manager._id)) continue;
+      const reportsTo = await ensureManagerAssignmentIsValid({ tenantId: req.tenantId, employeeId: link.employeeId, reportsTo: manager._id });
+      await Employee.updateOne({ _id: link.employeeId, tenantId: req.tenantId }, { $set: { reportsTo } });
+      results.managersSet += 1;
+    } catch (error) {
+      results.warnings.push({ row: link.rowNo, employeeCode: link.employeeCode, message: error.message });
     }
   }
   res.json(results);

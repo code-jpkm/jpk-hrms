@@ -109,3 +109,41 @@
   .att-drawer-backdrop.ps-modal-backdrop{padding:0;align-items:flex-end}
   .ps-modal{border-radius:16px 16px 0 0;max-height:92vh}
 }
+
+/* Professional tax slabs (Payroll → statutory rules) */
+.ptax-slabs{margin:14px 0 6px;padding:14px 16px;border:1px solid #E1E1E4;border-radius:12px;background:#FFFFFF}
+.ptax-slabs-head b{display:block;font-size:14px;color:#1F3445}
+.ptax-slabs-head span{display:block;font-size:12.5px;color:#5F5F66;margin:2px 0 10px}
+.ptax-slab-row{display:grid;grid-template-columns:150px 140px 44px 100px auto;justify-content:start;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+.ptax-slab-row input{width:100%;min-width:0}
+.ptax-slab-row button{justify-self:start;min-height:32px!important;padding:4px 10px!important;font-size:12px!important}
+.ptax-slab-row.above{border-top:1px dashed #E1E1E4;padding-top:8px;font-weight:600}
+.ptax-add{margin-top:6px}
+@media (max-width:640px){
+  .ptax-slab-row{grid-template-columns:minmax(0,1fr) auto 72px auto;justify-content:stretch;row-gap:4px;margin:10px 0}
+  .ptax-slab-row input{padding-left:8px!important;padding-right:4px!important}
+  .ptax-slab-row>:first-child{grid-column:1/-1}
+  .ptax-slab-row.above{grid-template-columns:auto 72px;justify-content:start}
+  .ptax-slab-row.above>span:empty{display:none}
+}
+
+/* Loans and salary advances (Payroll) */
+.loans-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.loans-summary>div{padding:10px 12px;border:1px solid #E1E1E4;border-radius:10px;background:#F7F7F8}
+.loans-summary span{display:block;font-size:11px;color:#807F84;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
+.loans-summary b{display:block;font-size:16px;color:#1F3445;margin-top:2px}
+.loans-form{margin-top:12px;padding:12px;border:1px solid #E1E1E4;border-radius:12px;background:#FFFFFF}
+.loans-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end}
+.loans-panel .import-result{margin:12px 0 0}
+.loans-table-wrap{margin-top:12px;overflow-x:auto;border:1px solid #E1E1E4;border-radius:10px}
+.loans-table{width:100%;border-collapse:collapse;font-size:13px}
+.loans-table th{text-align:left;font-size:11px;text-transform:uppercase;color:#807F84;font-weight:800;padding:8px 10px;background:#F7F7F8;border-bottom:1px solid #E1E1E4;white-space:nowrap}
+.loans-table td{padding:8px 10px;border-bottom:1px solid #EFEFF1;vertical-align:top;white-space:nowrap}
+.loans-table td small{display:block;font-size:11.5px;color:#807F84;margin-top:2px}
+.loans-table tr:last-child td{border-bottom:0}
+.loans-table tr.done td{color:#807F84}
+.loans-row-actions{display:flex;gap:6px;justify-content:flex-end}
+.loans-row-actions button{min-height:28px!important;padding:3px 8px!important;font-size:12px!important}
+.loans-toggle{margin-top:8px}
+.loans-help{margin:10px 0 0;font-size:12px;color:#807F84;line-height:1.45}
+@media (max-width:640px){.loans-summary{grid-template-columns:1fr}}

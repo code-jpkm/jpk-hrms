@@ -73,6 +73,30 @@ function parseImportDate(value, { date1904 = false } = {}) {
   return null;
 }
 
+/**
+ * A month from an import cell as "YYYY-MM": "2026-11", "11/2026", "Nov 2026",
+ * "November-2026", or a date (Excel turns "Nov-26" into one) for its month.
+ * Undefined for a blank cell, null for anything it cannot read.
+ */
+function parseImportMonth(value, { date1904 = false } = {}) {
+  if (value === '' || value === null || value === undefined) return undefined;
+  const key = (year, month) => (year >= 1900 && month >= 1 && month <= 12 ? `${year}-${String(month).padStart(2, '0')}` : null);
+  if (typeof value === 'number' || value instanceof Date) {
+    const date = parseImportDate(value, { date1904 });
+    return date ? key(date.getUTCFullYear(), date.getUTCMonth() + 1) : null;
+  }
+  const s = String(value).trim();
+  if (!s) return undefined;
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})$/);
+  if (m) return key(Number(m[1]), Number(m[2]));
+  m = s.match(/^(\d{1,2})[-/.](\d{4})$/);
+  if (m) return key(Number(m[2]), Number(m[1]));
+  m = s.match(/^([A-Za-z]{3,9})\.?[-\s/,']+(\d{2}|\d{4})$/);
+  if (m && MONTHS[m[1].slice(0, 3).toLowerCase()]) return key(expandYear(Number(m[2])), MONTHS[m[1].slice(0, 3).toLowerCase()]);
+  const date = parseImportDate(s, { date1904 });
+  return date ? key(date.getUTCFullYear(), date.getUTCMonth() + 1) : null;
+}
+
 function workbookBuffer({ sheetName = 'Template', headers = [], rows = [], instructions = [] }) {
   const wb = XLSX.utils.book_new();
   const data = rows.length ? rows : [];
@@ -85,4 +109,4 @@ function workbookBuffer({ sheetName = 'Template', headers = [], rows = [], instr
   return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
 }
 
-module.exports = { readWorkbookRows, workbookBuffer, parseImportDate };
+module.exports = { readWorkbookRows, workbookBuffer, parseImportDate, parseImportMonth };

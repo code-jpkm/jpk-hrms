@@ -96,8 +96,12 @@ function applySlipEdits(calculated, edits, manualAdjustments) {
   return { earnings, deductions, netPay };
 }
 
-/** The engine's figures as the "calculated" half of a slip. */
-function calculatedFromEngine(calc) {
+/**
+ * The engine's figures as the "calculated" half of a slip. `loan` is this
+ * month's loan instalment (services/loanService.js) and `loans` which loan each
+ * part of it recovers.
+ */
+function calculatedFromEngine(calc, { loan = 0, loans = [] } = {}) {
   const earnings = {
     basic: calc.basic,
     hra: calc.hra,
@@ -108,9 +112,9 @@ function calculatedFromEngine(calc) {
     custom: { ...(calc.customEarnings || {}) },
     master: { ...(calc.contractEarnings || {}) }
   };
-  const deductions = { ...clone(calc.deductions || {}), loan: 0 };
+  const deductions = { ...clone(calc.deductions || {}), loan: round2(loan) };
   const netPay = retotal(earnings, deductions);
-  return { earnings, deductions, netPay };
+  return loans.length ? { earnings, deductions, netPay, loans: clone(loans) } : { earnings, deductions, netPay };
 }
 
 /** Older slips have no "calculated" copy: their saved figures are the calculation. */

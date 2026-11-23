@@ -54,7 +54,8 @@ async function salarySheetRows(req, runId) {
     pf: s.deductions?.pf || 0,
     esi: s.deductions?.esi || 0,
     ptax: s.deductions?.ptax || 0,
-    otherDeductions: roundMoney(Number(s.deductions?.total || 0) - Number(s.deductions?.pf || 0) - Number(s.deductions?.esi || 0) - Number(s.deductions?.ptax || 0)),
+    loan: s.deductions?.loan || 0,
+    otherDeductions: roundMoney(Number(s.deductions?.total || 0) - Number(s.deductions?.pf || 0) - Number(s.deductions?.esi || 0) - Number(s.deductions?.ptax || 0) - Number(s.deductions?.loan || 0)),
     totalDeductions: s.deductions?.total || 0,
     netPay: s.netPay || 0
   }));
@@ -69,7 +70,17 @@ async function salarySheetRows(req, runId) {
 }
 
 
-function n(value) { return Number(value || 0); }
+/**
+ * Money from a form or an Excel cell. Excel hands formatted text to the importer, so
+ * "10,500" and "₹ 10,500" must read as 10500 (they used to become 0 and the row failed
+ * with a negative net salary). Non-numeric text stays NaN so the row is refused.
+ */
+function n(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return value;
+  const cleaned = String(value).replace(/₹|rs\.?|inr/gi, '').replace(/[,\s]/g, '');
+  return cleaned ? Number(cleaned) : 0;
+}
 function normalizeSalaryMasterBody(body) {
   const srcEarnings = body.earnings || {};
   const srcDeductions = body.deductions || {};
@@ -477,8 +488,8 @@ exports.salarySheet = asyncHandler(async (req, res) => {
 
 exports.salarySheetCsv = asyncHandler(async (req, res) => {
   const { run, rows } = await salarySheetRows(req, req.params.runId);
-  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Other Earnings', 'Gross', 'PF', 'ESI', 'PTax', 'Other Deductions', 'Total Deductions', 'Net Pay'];
-  const body = rows.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.otherEarnings, r.gross, r.pf, r.esi, r.ptax, r.otherDeductions, r.totalDeductions, r.netPay].map(csvEscape).join(','));
+  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Other Earnings', 'Gross', 'PF', 'ESI', 'PTax', 'Loan', 'Other Deductions', 'Total Deductions', 'Net Pay'];
+  const body = rows.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.otherEarnings, r.gross, r.pf, r.esi, r.ptax, r.loan, r.otherDeductions, r.totalDeductions, r.netPay].map(csvEscape).join(','));
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=salary-sheet-${run.month}.csv`);
   res.send([headers.join(','), ...body].join('\n'));
@@ -494,17 +505,17 @@ exports.salarySheetPdf = asyncHandler(async (req, res) => {
   doc.moveDown(0.5);
   doc.fontSize(9).text(`Employees: ${run.summary?.employeeCount || rows.length}    Gross: Rs. ${run.summary?.grossTotal || 0}    Deductions: Rs. ${run.summary?.deductionTotal || 0}    Net: Rs. ${run.summary?.netTotal || 0}`);
   doc.moveDown(0.8);
-  const cols = [30, 85, 175, 255, 330, 370, 420, 470, 530, 600, 650, 700, 745, 790];
-  const heads = ['Code', 'Name', 'Dept', 'Pay/Work', 'Basic', 'HRA', 'Conv', 'Spl', 'Gross', 'PF', 'ESI', 'PTax', 'Deduct', 'Net'];
+  const cols = [30, 80, 165, 235, 285, 333, 377, 421, 465, 520, 563, 603, 643, 690, 745];
+  const heads = ['Code', 'Name', 'Dept', 'Pay/Work', 'Basic', 'HRA', 'Conv', 'Spl', 'Gross', 'PF', 'ESI', 'PTax', 'Loan', 'Deduct', 'Net'];
   let y = doc.y;
   doc.fontSize(8).font('Helvetica-Bold');
-  heads.forEach((h, i) => doc.text(h, cols[i], y, { width: i === 1 ? 100 : 60 }));
+  heads.forEach((h, i) => doc.text(h, cols[i], y, { width: i === 1 ? 82 : i === 2 ? 66 : 44 }));
   doc.font('Helvetica');
   y += 16;
   for (const r of rows) {
     if (y > 550) { doc.addPage(); y = 30; }
-    const vals = [r.employeeCode, r.name, r.department, `${r.payableDays}/${r.workingDays}`, r.basic, r.hra, r.conveyance, r.specialAllowance, r.gross, r.pf, r.esi, r.ptax, r.totalDeductions, r.netPay];
-    vals.forEach((v, i) => doc.text(String(v ?? ''), cols[i], y, { width: i === 1 ? 85 : 48 }));
+    const vals = [r.employeeCode, r.name, r.department, `${r.payableDays}/${r.workingDays}`, r.basic, r.hra, r.conveyance, r.specialAllowance, r.gross, r.pf, r.esi, r.ptax, r.loan, r.totalDeductions, r.netPay];
+    vals.forEach((v, i) => doc.text(String(v ?? ''), cols[i], y, { width: i === 1 ? 82 : i === 2 ? 66 : 44 }));
     y += 15;
   }
   doc.end();

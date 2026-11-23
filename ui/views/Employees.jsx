@@ -5,6 +5,7 @@ import { useSearchParams } from '../lib/router.jsx';
 import LoginDetailsPanel from '../components/auth/LoginDetailsPanel.jsx';
 import LoginPlanDialog from '../components/auth/LoginPlanDialog.jsx';
 import PortalAccessCard from './employees/PortalAccessCard.jsx';
+import ImportResult from '../components/ImportResult.jsx';
 import '../styles/login.css';
 import toast from 'react-hot-toast';
 import { Card, Empty, ErrorBox, Field } from '../components/Ui.jsx';
@@ -125,6 +126,7 @@ export default function Employees() {
   const [editingId, setEditingId] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [message, setMessage] = useState('');
+  const [importResult, setImportResult] = useState(null);
   const [loginResult, setLoginResult] = useState(null);
   const [loginPlanOpen, setLoginPlanOpen] = useState(false);
   const { data: loginSummary, reload: reloadLoginSummary } = useApi(canManageLogin ? '/employees/login-details/summary' : '', [canManageLogin]);
@@ -179,7 +181,7 @@ export default function Employees() {
   function sendLoginDetailsToAll() { setLoginPlanOpen(true); }
   async function downloadLetter(emp, type) { try { const blob = await api(`/employees/${emp._id}/letters/${type}/download`); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${type}-letter-${emp.employeeCode}.pdf`; a.click(); setTimeout(()=>URL.revokeObjectURL(url), 1000); toast.success('Employee letter download started'); } catch (err) { setSubmitError(err); toast.error(err.message || 'Could not download employee letter'); } }
   async function downloadEmployeeTemplate() { setSubmitError(null); try { const blob=await api('/employees/import-template.xlsx'); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='JPK-Employee-Import-Template.xlsx'; a.click(); setTimeout(()=>URL.revokeObjectURL(url), 1000); toast.success('Employee Excel template download started'); } catch(err){setSubmitError(err); toast.error(err.message || 'Could not download employee template');} }
-  async function importEmployees(e) { const file=e.target.files?.[0]; if(!file) return; setSubmitError(null); setMessage(''); try { const dataUrl=await fileToDataUrl(file); const res=await post('/employees/import-excel',{fileName:file.name,dataUrl}); setMessage(`Excel import complete: ${res.created} created, ${res.updated} updated${res.errors?.length ? `, ${res.errors.length} row error(s)` : ''}. Existing employees were updated by Employee Code; nobody was deleted.`); reload(); } catch(err){setSubmitError(err);} finally{e.target.value='';} }
+  async function importEmployees(e) { const file=e.target.files?.[0]; if(!file) return; setSubmitError(null); setMessage(''); try { const dataUrl=await fileToDataUrl(file); const res=await post('/employees/import-excel',{fileName:file.name,dataUrl}); setMessage(`Excel import complete: ${res.created} created, ${res.updated} updated${res.errors?.length ? `, ${res.errors.length} row error(s)` : ''}. Existing employees were updated by Employee Code; nobody was deleted.`); setImportResult({ fileName: file.name, ...res }); reload(); } catch(err){setSubmitError(err);} finally{e.target.value='';} }
 
   return <div className="nexus-page employee-module">
     <ErrorBox error={error || submitError} />
@@ -191,6 +193,18 @@ export default function Employees() {
       <div className="people-hero-copy"><small>PEOPLE · DIRECTORY · PRESENCE</small><h1>Your whole team, beautifully organized.</h1><p>Everyone in the company. Search for a person, open their profile, or add a new employee.</p><div className="people-stats"><span><b>{activeCount}</b><small>Active</small></span><span><b>{onlineCount}</b><small>Online now</small></span><span><b>{officeCount}</b><small>Office</small></span><span><b>{factoryCount}</b><small>Factory</small></span></div></div>
       <div className="hero-actions people-actions">{canManageLogin && <button type="button" className={loginSummary?.toSend > 0 ? 'primary' : ''} onClick={sendLoginDetailsToAll} title="Give everyone a temporary password by email / WhatsApp. You see who gets one before anything is sent.">🔑 Send login details{loginSummary?.toSend > 0 ? ` to ${loginSummary.toSend}` : ''}</button>}<button onClick={() => { setMode('directory'); setSelectedId(''); }}>Directory</button>{selected && <button onClick={() => view(selected)}>Open profile</button>}{canCreate && <><button onClick={downloadEmployeeTemplate}>Excel template</button><label className="file-button">Import Excel<input type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={importEmployees}/></label><button className="primary" onClick={openAdd}>+ Add employee</button></>}<button onClick={reload}>↻ Refresh</button></div>
     </section>
+
+    {importResult && <ImportResult
+      title={`Excel import · ${importResult.fileName}`}
+      facts={[
+        `${importResult.created || 0} added`,
+        `${importResult.updated || 0} updated`,
+        importResult.machineIdsLinked ? `${importResult.machineIdsLinked} machine ID${importResult.machineIdsLinked === 1 ? '' : 's'} linked` : null,
+        importResult.managersSet ? `${importResult.managersSet} reporting manager${importResult.managersSet === 1 ? '' : 's'} set` : null
+      ]}
+      errors={importResult.errors || []}
+      warnings={importResult.warnings || []}
+      onClose={() => setImportResult(null)} />}
 
     {mode === 'directory' && <>
       <section className="directory-filter premium-filter people-filter-v22"><label className="people-search"><span>⌕</span><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search people, code, department, designation…" /></label><div className="segmented"><button className={workplace==='ALL'?'active':''} onClick={()=>setWorkplace('ALL')}>Everyone</button><button className={workplace==='OFFICE'?'active':''} onClick={()=>setWorkplace('OFFICE')}>Office</button><button className={workplace==='FACTORY'?'active':''} onClick={()=>setWorkplace('FACTORY')}>Factory</button></div><select value={department} onChange={(e)=>setDepartment(e.target.value)}><option value="">All departments</option>{departments.map((d)=><option key={d}>{d}</option>)}</select><strong>{filtered.length} people</strong></section>

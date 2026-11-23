@@ -9,6 +9,7 @@ const Shift = require('./models/Shift');
 const PayrollRule = require('./models/PayrollRule');
 const PayslipTemplate = require('./models/PayslipTemplate');
 const AttendancePolicy = require('./models/AttendancePolicy');
+const { JPK_PTAX_SLABS, JPK_PTAX_ABOVE_LAST_SLAB } = require('./services/startupUpdates');
 
 const MIGRATION_VERSION = 22;
 
@@ -90,9 +91,10 @@ async function seedConfiguration(tenant) {
   await PayrollRule.findOneAndUpdate(
     { tenantId: tenant._id, active: true },
     { $setOnInsert: { tenantId: tenant._id, name: 'JPK Statutory Payroll Rule', active: true,
-      pf: { enabled: true, employeePercent: 0.12, employerPercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: true },
-      esi: { enabled: true, employeePercent: 0.0075, employerPercent: 0.0325, grossCap: 21000, calculationBase: 'GROSS' },
-      ptax: { enabled: true, defaultAmount: 200, slabs: [] },
+      // The JPK rules (as in greytHR), see services/startupUpdates.js.
+      pf: { enabled: true, employeePercent: 0.12, employerPercent: 0.12, wageCap: 15000, calculationBase: 'BASIC', applyWageCap: false },
+      esi: { enabled: true, employeePercent: 0.0075, employerPercent: 0.0325, grossCap: 21000, calculationBase: 'BASIC' },
+      ptax: { enabled: true, defaultAmount: JPK_PTAX_ABOVE_LAST_SLAB, slabs: JPK_PTAX_SLABS },
       notes: 'Seeded safely without touching employee or payroll transaction data.' } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );

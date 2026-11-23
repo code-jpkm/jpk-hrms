@@ -15,6 +15,7 @@ const { getReportingManager, canApproveEmployee } = require('../services/approva
 const { evaluateAttendanceRecord } = require('../services/attendanceRulesService');
 const { settleAttendanceChange, withPayrollNote } = require('../services/attendanceChangeService');
 const { notifyUser, notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
+const { readWorkbookRows, workbookBuffer, parseImportMonth } = require('../utils/excel');
 
 function inclusiveDays(from, to, dayPart = 'FULL') {
   const a = startOfDay(from);
@@ -95,6 +96,106 @@ exports.grants = asyncHandler(async (req, res) => {
   const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'LEAVE' });
   const grants = await LeaveGrant.find({ tenantId: req.tenantId, employeeId: { $in: allowed } }).populate('employeeId', 'employeeCode firstName lastName').sort('-createdAt').limit(200);
   res.json({ grants });
+});
+
+// Opening balances from Excel (moving from greytHR, or a yearly reset). -----
+
+const BALANCE_HEADERS = ['Employee Code', 'Employee Name', 'Leave Type', 'Balance', 'Credited Up To Month', 'Note'];
+// Leave type names as greytHR and people write them → the HRMS leave type.
+const LEAVE_TYPE_NAMES = {
+  EL: 'EL', 'EARNED LEAVE': 'EL', 'EARNED LEAVE F': 'EL', PL: 'EL', 'PRIVILEGE LEAVE': 'EL',
+  CL: 'CL', 'CASUAL LEAVE': 'CL',
+  SL: 'SL', 'SICK LEAVE': 'SL',
+  COMP_OFF: 'COMP_OFF', 'COMP OFF': 'COMP_OFF', COMPOFF: 'COMP_OFF', CO: 'COMP_OFF', 'COMPENSATORY OFF': 'COMP_OFF'
+};
+const NOT_BALANCES = new Set(['LOP', 'LOSS OF PAY', 'WFH', 'WORK FROM HOME']);
+const blank = (v) => v === '' || v === null || v === undefined;
+const cellText = (...values) => String(values.find((v) => !blank(v)) ?? '').trim();
+const round2 = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
+const typeKey = (value) => String(value || '').toUpperCase().replace(/[\s_-]+/g, ' ').trim();
+
+exports.balanceTemplate = asyncHandler(async (req, res) => {
+  const buffer = workbookBuffer({
+    sheetName: 'Leave balances',
+    headers: BALANCE_HEADERS,
+    instructions: [
+      'One row per person and leave type. Employee Name is only for you to read.',
+      'Leave Type: EL (earned leave), CL, SL or COMP_OFF. The greytHR names (EARNED LEAVE, Earned Leave F, Comp - Off) work too.',
+      'Balance: the days the person has today. The HRMS sets the balance to this number (it does not add to it), so uploading the same file twice changes nothing.',
+      'Credited Up To Month (EL only, optional): the last month whose monthly EL is already in the balance, for example 2026-11. The HRMS credits from the month after, so no month is counted twice.',
+      'Loss of pay and work from home rows are not balances and are skipped.'
+    ]
+  });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="JPK-Leave-Balances-Template.xlsx"');
+  res.end(buffer);
+});
+
+exports.importBalances = asyncHandler(async (req, res) => {
+  const rows = readWorkbookRows(req.body.dataUrl, { raw: true });
+  const fileName = String(req.body.fileName || 'Excel').slice(0, 120);
+  const allowed = new Set((await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'LEAVE' })).map(String));
+  const policyTypes = new Set((await LeavePolicy.find({ tenantId: req.tenantId }).select('leaveType').lean()).map((p) => String(p.leaveType).toUpperCase()));
+  const result = { updated: 0, unchanged: 0, errors: [], warnings: [] };
+  const wanted = new Map();
+
+  rows.forEach((row, index) => {
+    const rowNo = index + 2;
+    if (Object.values(row).every(blank)) return;
+    const typed = cellText(row['Employee Code'], row.employeeCode);
+    const code = typed.toUpperCase();
+    if (!code) { result.errors.push({ row: rowNo, message: 'Employee Code is empty' }); return; }
+    const typedType = cellText(row['Leave Type'], row.leaveType);
+    const key = typeKey(typedType);
+    if (NOT_BALANCES.has(key)) { result.warnings.push({ row: rowNo, employeeCode: code, message: `${typedType} is not a leave balance, so the row was skipped` }); return; }
+    const type = policyTypes.has(typedType.toUpperCase()) ? typedType.toUpperCase() : (LEAVE_TYPE_NAMES[key] || LEAVE_TYPE_NAMES[key.replace(/ /g, '')]);
+    if (!type) { result.errors.push({ row: rowNo, employeeCode: code, message: `Leave Type "${typedType}" is not known. Use EL, CL, SL or COMP_OFF.` }); return; }
+    const raw = row.Balance ?? row.balance;
+    const days = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(/,/g, '').trim());
+    if (blank(raw) || !Number.isFinite(days) || days < 0) { result.errors.push({ row: rowNo, employeeCode: code, message: `Balance "${raw}" must be a number of days, 0 or more` }); return; }
+    const credited = parseImportMonth(row['Credited Up To Month'], { date1904: rows.date1904 });
+    if (credited === null) { result.errors.push({ row: rowNo, employeeCode: code, message: `Credited Up To Month "${row['Credited Up To Month']}" is not a month (use 2026-11)` }); return; }
+    if (credited && type !== 'EL') result.warnings.push({ row: rowNo, employeeCode: code, message: 'Credited Up To Month is only used for EL' });
+    const id = `${code}|${type}`;
+    const entry = wanted.get(id);
+    if (entry) {
+      entry.days = round2(entry.days + days);
+      if (credited && type === 'EL' && (!entry.credited || credited > entry.credited)) entry.credited = credited;
+      result.warnings.push({ row: rowNo, employeeCode: code, message: `A second ${type} row (from row ${entry.row}): added together, ${entry.days} days in all` });
+    } else {
+      wanted.set(id, { row: rowNo, typed, code, type, days: round2(days), credited: type === 'EL' ? credited : undefined, note: cellText(row.Note, row.Notes) });
+    }
+  });
+
+  const codes = [...new Set([...wanted.values()].flatMap((e) => [e.code, e.typed]))];
+  const employees = await Employee.find({ tenantId: req.tenantId, employeeCode: { $in: codes } }).select('employeeCode firstName lastName status');
+  const byCode = new Map(employees.map((e) => [String(e.employeeCode).toUpperCase(), e]));
+  for (const entry of wanted.values()) {
+    const employee = byCode.get(entry.code);
+    if (!employee || !allowed.has(String(employee._id))) { result.errors.push({ row: entry.row, employeeCode: entry.code, message: 'Not in the HRMS (or outside your leave scope). Import the employee first.' }); continue; }
+    if (employee.status === 'OFFBOARDED') { result.warnings.push({ row: entry.row, employeeCode: entry.code, message: 'Has left the company, so the balance was not changed' }); continue; }
+    const balance = await LeaveBalance.findOneAndUpdate(
+      { tenantId: req.tenantId, employeeId: employee._id, leaveType: entry.type },
+      { $setOnInsert: { accrued: 0, used: 0, manualAdjusted: 0, carriedForward: 0 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    const delta = round2(entry.days - Number(balance.available || 0));
+    let changed = false;
+    if (Math.abs(delta) >= 0.001) { balance.manualAdjusted = round2(Number(balance.manualAdjusted || 0) + delta); changed = true; }
+    if (entry.credited && (!balance.lastAccruedForMonth || balance.lastAccruedForMonth < entry.credited)) { balance.lastAccruedForMonth = entry.credited; changed = true; }
+    if (!changed) { result.unchanged += 1; continue; }
+    await balance.save();
+    if (Math.abs(delta) >= 0.001) {
+      await LeaveGrant.create({ tenantId: req.tenantId, employeeId: employee._id, leaveType: entry.type, days: delta, grantType: 'OPENING_BALANCE', reason: entry.note || `Opening balance (${fileName})`, referenceDate: new Date(), grantedBy: req.user._id });
+    }
+    result.updated += 1;
+  }
+  if (result.updated) {
+    await RuleAudit.create({ tenantId: req.tenantId, module: 'LEAVE', action: 'IMPORT_LEAVE_BALANCES', after: { updated: result.updated, unchanged: result.unchanged, errors: result.errors.length }, reason: `Leave balances from ${fileName}`, changedBy: req.user._id });
+  }
+  result.errors.sort((a, b) => a.row - b.row);
+  result.warnings.sort((a, b) => a.row - b.row);
+  res.json(result);
 });
 
 exports.balances = asyncHandler(async (req, res) => {
