@@ -22,6 +22,7 @@ const RuleAudit = require('../models/RuleAudit');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
 const Regularization = require('../models/Regularization');
+const { fingerprintOnly, isFingerprintOnly } = require('../services/attendanceModeService');
 
 async function getOwnEmployee(req) {
   const employee = req.employee;
@@ -257,6 +258,8 @@ async function mobileMark(req, mode) {
   const context = await getMobileAttendanceContext(req);
   const { employee, now, attendanceDate, attendance: current } = context;
   const tenant = await Tenant.findById(req.tenantId);
+  // Factory staff mark attendance on the fingerprint machine only (Company Settings).
+  if (fingerprintOnly(employee, tenant)) throw new ApiError(403, 'Mark your attendance on the fingerprint machine.');
   const point = { lat: latNumber, lng: lngNumber };
   let source = 'MOBILE_GEOFENCE';
   let site = null;
@@ -348,16 +351,19 @@ exports.mobileState = asyncHandler(async (req, res) => {
   const lateMinutes = record?.checkIn && window ? lateMinutesAfterGrace(window.start, record.checkIn, graceMinutes) : 0;
   const workedMinutes = record?.checkIn ? minutesBetween(record.checkIn, record.checkOut || new Date()) : 0;
   const employee = context.employee;
+  const onlyFingerprint = await isFingerprintOnly(employee, req.tenantId);
   res.json({
     shift: shift ? { name: shift.name, startTime: shift.startTime, endTime: shift.endTime, graceMinutes, durationMinutes: window?.durationMinutes || 0, weeklyOffDays: shift.weeklyOffDays || [] } : null,
     window: window ? { start: window.start, end: window.end } : null,
     lateMinutes,
     workedMinutes,
-    mobile: {
-      enabled: Boolean(employee.canUseAnywhereAttendance || employee.canUseGeofencing),
-      mode: employee.canUseAnywhereAttendance ? 'ANYWHERE' : employee.canUseGeofencing ? 'GEOFENCE' : (employee.canApplyWfh ? 'WFH_ONLY' : 'BIOMETRIC'),
-      canApplyWfh: Boolean(employee.canApplyWfh)
-    },
+    mobile: onlyFingerprint
+      ? { enabled: false, mode: 'BIOMETRIC', canApplyWfh: false, fingerprintOnly: true }
+      : {
+        enabled: Boolean(employee.canUseAnywhereAttendance || employee.canUseGeofencing),
+        mode: employee.canUseAnywhereAttendance ? 'ANYWHERE' : employee.canUseGeofencing ? 'GEOFENCE' : (employee.canApplyWfh ? 'WFH_ONLY' : 'BIOMETRIC'),
+        canApplyWfh: Boolean(employee.canApplyWfh)
+      },
     date: dateKey(context.attendanceDate),
     attendance: context.attendance,
     canCheckIn: context.canCheckIn,

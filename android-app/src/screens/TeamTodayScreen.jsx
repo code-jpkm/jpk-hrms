@@ -9,6 +9,8 @@ import { useApi } from '../hooks/useApi';
 import { colors, font, radius, shadow } from '../theme';
 import { formatDay, formatMinutes, formatPunch, todayKey } from '../utils/time';
 import { TEAM_STATES, leaveName } from '../utils/attendance';
+import { useAuth } from '../state/AuthContext';
+import { canSeeWfh } from '../utils/permissions';
 
 const FILTERS = [
   { key: 'ALL', label: 'All', test: () => true },
@@ -34,6 +36,9 @@ function detail(r) {
 }
 
 export default function TeamTodayScreen() {
+  const { user, employee } = useAuth();
+  // "Leave / WFH" only for people who may see WFH; factory staff see "On leave".
+  const filters = useMemo(() => (canSeeWfh(user, employee) ? FILTERS : FILTERS.map((f) => (f.key === 'AWAY' ? { ...f, label: 'On leave' } : f))), [user, employee]);
   const [date, setDate] = useState(todayKey());
   const [filter, setFilter] = useState('ALL');
   const [query, setQuery] = useState('');
@@ -42,13 +47,13 @@ export default function TeamTodayScreen() {
   const s = data?.summary || {};
 
   const rows = useMemo(() => {
-    const f = FILTERS.find((x) => x.key === filter) || FILTERS[0];
+    const f = filters.find((x) => x.key === filter) || filters[0];
     const q = query.trim().toLowerCase();
     return (data?.rows || [])
       .filter(f.test)
       .filter((r) => !q || `${r.name} ${r.employeeCode} ${r.department}`.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data, filter, query]);
+  }, [data, filter, query, filters]);
 
   const counts = {
     ALL: s.total || 0,
@@ -77,7 +82,7 @@ export default function TeamTodayScreen() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 12 }}>
-        {FILTERS.map((f) => (
+        {filters.map((f) => (
           <Pressable key={f.key} onPress={() => setFilter(f.key)} style={[styles.chip, filter === f.key && styles.chipOn]} accessibilityRole="button" accessibilityState={{ selected: filter === f.key }}>
             <T style={[styles.chipText, filter === f.key && { color: '#FFFFFF' }]}>{f.label} · {counts[f.key]}</T>
           </Pressable>

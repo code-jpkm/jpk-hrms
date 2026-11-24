@@ -71,11 +71,14 @@ export function canApplyOnBehalf(user) {
  *
  * It stays visible for anyone who administers it for others: Super Admin, HR
  * Admin, and approvers with LEAVE approve/manage rights, since they must be able
- * to read and decide other people's WFH requests.
+ * to read and decide other people's WFH requests. Factory staff on the
+ * fingerprint machine only (Company Settings) never see it, approvers included.
  */
 export function canSeeWfh(user, employee) {
   if (employee?.canApplyWfh === true) return true;
   if (['SUPER_ADMIN', 'HR_ADMIN'].includes(user?.role)) return true;
+  // Factory staff (fingerprint machine only) never see WFH, even when they approve leave.
+  if (employee?.fingerprintOnly) return false;
   if (hasAbility(user, 'LEAVE', 'APPROVE') || hasAbility(user, 'LEAVE', 'MANAGE')) return true;
   return false;
 }

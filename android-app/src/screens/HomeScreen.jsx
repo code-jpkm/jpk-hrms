@@ -101,7 +101,7 @@ function TodayCard({ state, error, onPunched }) {
         {!!state.notice && <Notice>{state.notice}</Notice>}
         {message && <Notice tone={message.ok ? 'ok' : 'warn'}>{message.text}</Notice>}
         {!mobileOn ? (
-          <T v="small">Phone check-in is off for you. Use the attendance machine.</T>
+          <T v="small">Punch on the fingerprint machine. Your attendance shows here by itself.</T>
         ) : state.completed ? null : state.canCheckOut ? (
           <Button title="Check out" icon={LogOut} variant="accent" loading={busy} onPress={() => punch('out')} />
         ) : state.canCheckIn ? (

@@ -16,7 +16,10 @@ const SalarySlip = require('../models/SalarySlip');
 const Notice = require('../models/Notice');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
+const PayrollRule = require('../models/PayrollRule');
 const { getScopedEmployeeIds } = require('../services/scopeService');
+const { isFingerprintOnly } = require('../services/attendanceModeService');
+const { payrollLockOn, isMonthOpen } = require('../services/payrollLockService');
 const { semanticDateKey, holidayDateKey } = require('../utils/date');
 const { hasAbility } = require('../middleware/auth');
 
@@ -57,18 +60,23 @@ exports.home = asyncHandler(async (req, res) => {
   // ---------- me ----------
   let mine = null;
   if (me) {
-    const [att, balances, slips, myPendingLeave, myPendingReg, assignment] = await Promise.all([
+    const [att, balances, slips, myPendingLeave, myPendingReg, assignment, payRule, onlyFingerprint] = await Promise.all([
       Attendance.findOne({ tenantId, employeeId: me._id, date: window }).select('status checkIn checkOut lateMinutes earlyLeaveMinutes source missingCheckOut').lean(),
       LeaveBalance.find({ tenantId, employeeId: me._id }).lean(),
       SalarySlip.find({ tenantId, employeeId: me._id }).populate('payrollRunId', 'status').sort('-month').limit(6).lean(),
       LeaveRequest.countDocuments({ tenantId, employeeId: me._id, status: 'PENDING' }),
       Regularization.countDocuments({ tenantId, employeeId: me._id, status: 'PENDING' }),
-      ShiftAssignment.findOne({ tenantId, employeeId: me._id, fromDate: { $lte: window.$lte }, toDate: { $gte: window.$gte } }).sort('-createdAt').lean()
+      // Same choice as attendance: the latest-starting assignment covering today,
+      // including open-ended ones (no end date), which the old query skipped.
+      ShiftAssignment.findOne({ tenantId, employeeId: me._id, fromDate: { $lte: window.$lte }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: window.$gte } }] }).sort('-fromDate -createdAt').lean(),
+      PayrollRule.findOne({ tenantId, active: true }).select('lockUntilMonthEnds').lean(),
+      isFingerprintOnly(me, tenantId)
     ]);
     let shift = null;
     if (assignment?.shiftId) shift = await Shift.findOne({ _id: assignment.shiftId, tenantId }).select('name startTime endTime').lean();
     if (!shift) shift = await Shift.findOne({ tenantId, active: true }).sort('createdAt').select('name startTime endTime').lean();
-    const slip = slips.find((s) => s.payrollRunId?.status === 'FINALIZED');
+    // A released payslip, and never one for a month that has not ended while payroll is locked.
+    const slip = slips.find((s) => s.payrollRunId?.status === 'FINALIZED' && (!payrollLockOn(payRule) || isMonthOpen(s.month)));
     mine = {
       attendance: att,
       shift,
@@ -80,7 +88,7 @@ exports.home = asyncHandler(async (req, res) => {
       })),
       latestSlip: slip ? { _id: slip._id, month: slip.month, netPay: slip.netPay, earnings: slip.earnings, deductions: slip.deductions } : null,
       pending: { leave: myPendingLeave, regularization: myPendingReg },
-      canMobileAttendance: Boolean(me.canUseGeofencing || me.canUseAnywhereAttendance)
+      canMobileAttendance: !onlyFingerprint && Boolean(me.canUseGeofencing || me.canUseAnywhereAttendance)
     };
   }
 

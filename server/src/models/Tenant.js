@@ -20,7 +20,12 @@ const tenantSchema = new mongoose.Schema({
   },
   // Address of the free Cloudflare relay that passes plain-http machine punches on
   // to the HRMS over https (Attendance machines → Through Cloudflare).
-  admsRelayHost: { type: String, trim: true, default: '' }
+  admsRelayHost: { type: String, trim: true, default: '' },
+  attendance: {
+    // Factory staff mark attendance on the fingerprint machine only: they never see
+    // phone check-in, geofencing, anywhere attendance or work from home.
+    factoryFingerprintOnly: { type: Boolean, default: true }
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Tenant', tenantSchema);

@@ -23,7 +23,7 @@ const { calculatedFromEngine, applySlipEdits } = require('./payslipModel');
 const { getActiveSalaryMastersMap } = require('./salaryMasterService');
 const { loanInstalmentsFor } = require('./loanService');
 
-async function attendanceStatsFor(employee, month, tenantId) {
+async function attendanceStatsFor(employee, month, tenantId, rule = null) {
   const { from, to } = monthRange(month);
   const today = companyToday();
   const allDates = eachDate(from, to);
@@ -104,6 +104,11 @@ async function attendanceStatsFor(employee, month, tenantId) {
     }
 
     if (!record) {
+      // A holiday is a paid day. WAGES staff keep holidays inside their "days less
+      // Sundays" count (27 in October 2026, as in greytHR), so a holiday with no
+      // attendance row is paid, not LOP. (Salaried staff never reach here on a
+      // holiday: their working days already leave holidays out.)
+      if (holidayKeys.has(key)) continue;
       absentDays += 1;
       missingAbsentDays += 1;
       totalLopDays += 1;
@@ -134,12 +139,22 @@ async function attendanceStatsFor(employee, month, tenantId) {
     }
   }
 
-  const workingDays = workingDates.length;
+  // The pay days a month's salary is divided by (the LOP per-day rate), as on
+  // JPK's own payslips and in greytHR: every day of the month the person works
+  // for the company (31 in October; from the joining date in the joining month),
+  // so Sundays and holidays are paid days. WAGES staff: those days less Sundays
+  // (27 in October). LOP itself still comes only from scheduled working days.
+  // A payroll rule can divide by the scheduled working days instead.
+  const byWorkingDays = rule?.lopDayBasis === 'WORKING_DAYS' || employee.employeeCategory === 'WAGES';
+  const employedDays = allDates.filter((d) => !(joinDate && startOfDay(d) < joinDate)).length;
+  const workingDays = byWorkingDays ? workingDates.length : employedDays;
   const attendanceLopDays = Math.min(Math.max(totalLopDays, 0), workingDays);
   const payableDays = Math.max(0, workingDays - attendanceLopDays);
 
   return {
     workingDays,
+    scheduledWorkingDays: workingDates.length,
+    dayBasis: byWorkingDays ? (employee.employeeCategory === 'WAGES' ? 'DAYS_LESS_SUNDAYS' : 'WORKING_DAYS') : 'CALENDAR_DAYS',
     payableDays,
     presentDays,
     halfDays,
@@ -161,7 +176,7 @@ async function attendanceStatsFor(employee, month, tenantId) {
  * new calculation; older "manual adjustments" are kept as extra lines.
  */
 async function buildSlip({ tenantId, run, employee, month, rule, salaryMaster, adjustment, previous }) {
-  const stats = await attendanceStatsFor(employee, month, tenantId);
+  const stats = await attendanceStatsFor(employee, month, tenantId, rule);
   const calc = calculateSalary({ employee, attendanceStats: stats, rule, salaryMaster });
   // Loan instalments come off after PF / ESI / P.Tax, up to the net pay left.
   const beforeLoan = calculatedFromEngine(calc);

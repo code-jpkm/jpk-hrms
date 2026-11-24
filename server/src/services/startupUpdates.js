@@ -7,6 +7,7 @@
 const Tenant = require('../models/Tenant');
 const PayrollRule = require('../models/PayrollRule');
 const RuleAudit = require('../models/RuleAudit');
+const { factoryFingerprintOnlyOn, switchOffFactoryPhoneAttendance } = require('./attendanceModeService');
 
 // JPK statutory rules from November 2026, the same as in greytHR:
 //   PF   12% of the earned Basic, on the full Basic (no ₹15,000 limit)
@@ -36,12 +37,28 @@ async function applyJpkStatutoryRules(tenantId) {
   return { before, after: rule.toObject() };
 }
 
+// Factory staff mark attendance on the fingerprint machine only (the new company
+// setting, on by default): any phone check-in, geofencing, anywhere or WFH switch
+// left on for a factory employee is turned off once.
+async function applyFactoryFingerprintOnly(tenantId) {
+  const tenant = await Tenant.findById(tenantId).select('attendance').lean();
+  if (!factoryFingerprintOnlyOn(tenant)) return { before: null, after: { skipped: 'Factory fingerprint-only is turned off for this company' } };
+  const switchedOff = await switchOffFactoryPhoneAttendance(tenantId);
+  return { before: { employees: switchedOff }, after: { switchedOff: switchedOff.length } };
+}
+
 const UPDATES = [
   {
     action: 'STARTUP_2026_11_STATUTORY_AS_GREYTHR',
     module: 'PAYROLL',
     reason: 'Statutory rules as in greytHR: PF on the full Basic, ESI on Basic (none above ₹21,000 Basic), new professional tax slabs',
     apply: applyJpkStatutoryRules
+  },
+  {
+    action: 'STARTUP_2026_11_FACTORY_FINGERPRINT_ONLY',
+    module: 'ATTENDANCE',
+    reason: 'Factory staff use the fingerprint machine only: phone check-in, geofencing, anywhere attendance and work from home switched off for factory employees',
+    apply: applyFactoryFingerprintOnly
   }
 ];
 

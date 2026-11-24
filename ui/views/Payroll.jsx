@@ -1,4 +1,4 @@
-import { currentMonthKey, monthLabel } from '../utils/time.js';
+import { currentMonthKey, monthLabel, shiftMonth, todayKey, formatDayKey } from '../utils/time.js';
 import { PayrollReview, ExplainSlip } from './payroll/PayrollAi.jsx';
 import SendPayslips from './payroll/SendPayslips.jsx';
 import PayslipEditor from './payroll/PayslipEditor.jsx';
@@ -56,7 +56,8 @@ export default function Payroll() {
   const canSharePayslips = hasAbility(user, 'PAYROLL', 'SHARE');
   const canAdjustPayslips = hasAbility(user, 'PAYROLL', 'ADJUST');
   const canUpdateSalaryMaster = hasAbility(user, 'PAYROLL', 'UPDATE_SALARY_MASTER');
-  const [month, setMonth] = useState(currentMonthKey());
+  // The last month that has ended: the one HR prepares and employees look for.
+  const [month, setMonth] = useState(shiftMonth(currentMonthKey(), -1));
   const { data: runs, error: runsError, reload: reloadRuns } = useApi(canReadPayrollAdmin ? '/payroll/runs' : '', [canReadPayrollAdmin]);
   const { data: slips, error: slipsError, reload: reloadSlips } = useApi(`/payroll/slips?month=${month}`, [month]);
   const { data: templateData, error: templateError, reload: reloadTemplate } = useApi(canReadPayrollAdmin ? '/payroll/payslip-template' : '', [canReadPayrollAdmin]);
@@ -109,6 +110,11 @@ export default function Payroll() {
   const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
   const monthSlips = slips?.slips || [];
   const isReleased = currentRun?.status === 'FINALIZED';
+  // Payroll lock: a month's payroll opens on the 1st of the next month (server decides; this mirrors it).
+  const lockOn = runs?.lock ? runs.lock.on : payRule.lockUntilMonthEnds !== false;
+  const opensOn = `${shiftMonth(month, 1)}-01`;
+  const monthLocked = lockOn && (runs?.lock?.today || todayKey()) < opensOn;
+  const opensOnLabel = formatDayKey(opensOn, { day: 'numeric', month: 'long', year: 'numeric' });
   const changedAfterSending = (s) => Boolean(s.lastSharedAt && s.contentChangedAt && new Date(s.contentChangedAt) > new Date(s.lastSharedAt));
   const sentCount = monthSlips.filter((s) => s.lastSharedAt).length;
   const resendCount = monthSlips.filter(changedAfterSending).length;
@@ -170,6 +176,24 @@ export default function Payroll() {
       }
       setError(err);
     }
+  }
+
+  async function deletePayroll() {
+    if (!currentRun?._id) return;
+    const label = monthLabel(currentRun.month);
+    const released = currentRun.status === 'FINALIZED';
+    const count = Number(currentRun.summary?.employeeCount || 0);
+    let reason = '';
+    if (released) {
+      reason = window.prompt(`Payroll for ${label} is RELEASED. Deleting it removes every payslip of the month, including any employees already received.\n\nType a reason to delete it:`) || '';
+      if (!reason.trim()) return;
+    } else if (!window.confirm(`Delete the ${label} payroll draft?\n\n${count ? `Its ${count} salary slip${count === 1 ? '' : 's'} will be removed. ` : 'Its salary slips will be removed. '}Attendance, salaries and loans are not touched, and you can generate ${label} again later.`)) return;
+    setError(null); setMessage('');
+    try {
+      const res = await remove(`/payroll/runs/${currentRun._id}`, { body: JSON.stringify({ reason }), loadingMessage: `Deleting ${label} payroll…`, successMessage: `${label} payroll deleted.` });
+      setMessage(res?.message || `${label} payroll deleted.`);
+      reloadRuns(); reloadSlips();
+    } catch (err) { setError(err); }
   }
 
   async function releasePayroll() {
@@ -253,7 +277,7 @@ export default function Payroll() {
       <ErrorBox error={error || runsError || slipsError || templateError || rulesError || employeesError || salaryMastersError} />
 
       <div className="payroll-top-grid">
-        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}</div>{canReadPayrollAdmin&&currentRun?.status==='DRAFT'&&waiting.days>0&&<p className="payroll-review-note">{waiting.people} employee{waiting.people===1?'':'s'} {waiting.people===1?'has':'have'} {waiting.days} day{waiting.days===1?'':'s'} with a missing out time (yellow on the attendance calendar). They are paid as present until decided; deciding a day there updates this draft at once.</p>}{canSharePayslips&&currentRun&&<div className="payroll-send-row">{isReleased?<><button className="primary" onClick={()=>setSendOpen(true)} disabled={!monthSlips.length}><Icon name="SendHorizontal" size={15}/> Send payslips</button><small>{sentCount} of {monthSlips.length} sent{resendCount?` · ${resendCount} changed after sending`:''}</small></>:<small>Nobody is notified on release. After release you can still edit payslips, then send them to the people you choose.</small>}</div>}</section>
+        <section className="premium-section-card payroll-run-card"><div className="premium-section-head"><div><small>CURRENT MONTH</small><h2>{canReadPayrollAdmin ? 'Prepare payroll' : 'Choose payslip month'}</h2><p>{canReadPayrollAdmin ? 'Pick the month, then generate the salary sheet. You can regenerate it until it is released.' : 'Pick a month to see your payslip.'}</p></div></div><div className="payroll-run-controls"><Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>{canRunPayroll && <button className="primary" onClick={runPayroll} disabled={monthLocked} title={monthLocked ? `Opens on ${opensOnLabel}` : undefined}>Generate / remake salary sheet</button>}{currentRun&&<span className={`payroll-run-status ${String(currentRun.status).toLowerCase()}`}>{currentRun.status}</span>}{canRunPayroll&&currentRun?.status==='DRAFT'&&!monthLocked&&<button className="release-payroll-btn" onClick={releasePayroll}>Release payroll</button>}{canRunPayroll&&currentRun&&(currentRun.status==='DRAFT'||user?.role==='SUPER_ADMIN')&&<button type="button" className="v26-btn danger" onClick={deletePayroll}>Delete payroll</button>}</div>{canRunPayroll&&monthLocked&&<p className="payroll-review-note">{monthLabel(month)} payroll opens on {opensOnLabel}, after the month ends.{currentRun ? ' This draft was made earlier: delete it, and generate the month again once it opens.' : ''}</p>}{canReadPayrollAdmin&&currentRun?.status==='DRAFT'&&waiting.days>0&&<p className="payroll-review-note">{waiting.people} employee{waiting.people===1?'':'s'} {waiting.people===1?'has':'have'} {waiting.days} day{waiting.days===1?'':'s'} with a missing out time (yellow on the attendance calendar). They are paid as present until decided; deciding a day there updates this draft at once.</p>}{canSharePayslips&&currentRun&&<div className="payroll-send-row">{isReleased?<><button className="primary" onClick={()=>setSendOpen(true)} disabled={!monthSlips.length}><Icon name="SendHorizontal" size={15}/> Send payslips</button><small>{sentCount} of {monthSlips.length} sent{resendCount?` · ${resendCount} changed after sending`:''}</small></>:<small>Nobody is notified on release. After release you can still edit payslips, then send them to the people you choose.</small>}</div>}</section>
 
         {canReadPayrollAdmin && <section className="premium-section-card released-payroll-card"><div className="premium-section-head"><div><small>RELEASED PAYROLL</small><h2>View a released month</h2><p>No salary amount is shown until a released month is selected.</p></div></div><Field label="Released month"><select value={releasedMonth} onChange={(e)=>setReleasedMonth(e.target.value)}><option value="">Select released payroll</option>{finalizedRuns.map((r)=><option key={r._id} value={r.month}>{r.month}</option>)}</select></Field>{releasedRun ? <div className="released-payroll-summary"><div><span>Net payout</span><b>{money(releasedRun.summary?.netTotal)}</b></div><div><span>Gross</span><b>{money(releasedRun.summary?.grossTotal)}</b></div><div><span>Deductions</span><b>{money(releasedRun.summary?.deductionTotal)}</b></div><div><span>Employees</span><b>{releasedRun.summary?.employeeCount||0}</b></div><div className="released-payroll-actions"><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'csv')}>Download CSV</button><button onClick={()=>downloadSalarySheet(releasedRun._id,releasedRun.month,'pdf')}>Download PDF</button></div></div> : <div className="payroll-locked-placeholder"><span>◉</span><div><b>Amounts hidden</b><small>Select a released month above to reveal totals.</small></div></div>}</section>}
       </div>
@@ -299,6 +323,8 @@ export default function Payroll() {
         <Field label={payRule.esi?.calculationBase === 'BASIC' ? 'No ESI when Basic is above' : 'No ESI when gross is above'}><input type="number" value={payRule.esi?.grossCap || 0} onChange={(e) => setRule('esi.grossCap', Number(e.target.value))} /></Field>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.ptax?.enabled !== false} onChange={(e) => setRule('ptax.enabled', e.target.checked)} /><span><b>P.Tax enabled</b></span></label>
         <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.roundToRupee !== false} onChange={(e) => setRule('roundToRupee', e.target.checked)} /><span><b>Whole rupees</b><small>Round LOP, salary parts and PF / ESI to the rupee, like the JPK payslip</small></span></label>
+        <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.lopDayBasis !== 'WORKING_DAYS'} onChange={(e) => setRule('lopDayBasis', e.target.checked ? 'CALENDAR_DAYS' : 'WORKING_DAYS')} /><span><b>LOP per day on all days of the month</b><small>On: one LOP day is the month's salary ÷ all its days (÷31 in October), like the JPK payslip and greytHR; Sundays and holidays are paid. Off: ÷ the working days only. Wages staff always use the days less Sundays.</small></span></label>
+        <label className="switch-row compact-switch"><input type="checkbox" checked={payRule.lockUntilMonthEnds !== false} onChange={(e) => setRule('lockUntilMonthEnds', e.target.checked)} /><span><b>Lock payroll until the month ends</b><small>On: a month's payroll can be generated from the 1st of the next month (November from 1 December), and employees never see a payslip for a month that has not ended.</small></span></label>
         <Field label="Change reason"><input value={payRule.notes || ''} onChange={(e) => setRule('notes', e.target.value)} /></Field>
       </div><PtaxSlabEditor ptax={payRule.ptax || {}} onChange={(next) => setRule('ptax', next)} /><details className="details-block"><summary>Advanced custom earnings / deduction JSON</summary><Field label="Custom earnings"><textarea rows="4" value={JSON.stringify(payRule.customEarnings || [], null, 2)} onChange={(e) => { try { setRule('customEarnings', JSON.parse(e.target.value)); } catch (_) {} }} /></Field><Field label="Custom deductions"><textarea rows="4" value={JSON.stringify(payRule.customDeductions || [], null, 2)} onChange={(e) => { try { setRule('customDeductions', JSON.parse(e.target.value)); } catch (_) {} }} /></Field></details><button className="primary" onClick={savePayRule}>Save payroll rule</button></div></details>}
 

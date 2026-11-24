@@ -130,6 +130,10 @@ export default function Employees() {
   const [loginResult, setLoginResult] = useState(null);
   const [loginPlanOpen, setLoginPlanOpen] = useState(false);
   const { data: loginSummary, reload: reloadLoginSummary } = useApi(canManageLogin ? '/employees/login-details/summary' : '', [canManageLogin]);
+  // Company Settings → "Factory staff use the fingerprint machine only" (on unless HR turned it off).
+  const canReadCompanySettings = hasAbility(user, 'COMPANY_SETTINGS', 'READ');
+  const { data: companySettings } = useApi(canReadCompanySettings ? '/company-settings' : '', [canReadCompanySettings], { skeleton: false });
+  const factoryFingerprintOnly = companySettings?.tenant?.attendance?.factoryFingerprintOnly !== false;
 
   // /employees?id=… (from the top search) opens that person's profile.
   useEffect(() => {
@@ -261,9 +265,13 @@ export default function Employees() {
         <Field label="Emergency Phone"><input value={form.emergencyContact.phone} onChange={(e)=>setNested('emergencyContact','phone',e.target.value)} /></Field>
         <Field label="Gross Salary"><input type="number" value={form.salary.gross} onChange={(e)=>setNested('salary','gross',Number(e.target.value))} /></Field>
         <label className="check"><input type="checkbox" checked={form.probation.enabled} onChange={(e)=>setNested('probation','enabled',e.target.checked)} /> 6 months probation enabled</label>
-        <label className="check"><input type="checkbox" checked={form.canUseGeofencing} onChange={(e)=>set('canUseGeofencing',e.target.checked)} /> Geofencing enabled</label>
-        <label className="check"><input type="checkbox" checked={form.canUseAnywhereAttendance} onChange={(e)=>set('canUseAnywhereAttendance',e.target.checked)} /> Anywhere attendance</label>
-        <label className="check"><input type="checkbox" checked={form.canApplyWfh === true} onChange={(e)=>set('canApplyWfh',e.target.checked)} /> Employee can apply Work From Home</label>
+        {String(form.workLocation || '').toUpperCase() === 'FACTORY' && factoryFingerprintOnly ? (
+          <p className="muted small">Factory staff mark attendance on the fingerprint machine only (Company Settings → Factory attendance).</p>
+        ) : (<>
+          <label className="check"><input type="checkbox" checked={form.canUseGeofencing} onChange={(e)=>set('canUseGeofencing',e.target.checked)} /> Geofencing enabled</label>
+          <label className="check"><input type="checkbox" checked={form.canUseAnywhereAttendance} onChange={(e)=>set('canUseAnywhereAttendance',e.target.checked)} /> Anywhere attendance</label>
+          <label className="check"><input type="checkbox" checked={form.canApplyWfh === true} onChange={(e)=>set('canApplyWfh',e.target.checked)} /> Employee can apply Work From Home</label>
+        </>)}
         <label className="check"><input type="checkbox" checked={form.createLogin} onChange={(e)=>set('createLogin',e.target.checked)} /> Create login</label>
         <label className="check"><input type="checkbox" checked={form.sendWelcome} onChange={(e)=>set('sendWelcome',e.target.checked)} /> Send login details (temporary password by email + WhatsApp)</label>
         <Field label="Current Address"><textarea value={form.personalDetails.currentAddress} onChange={(e)=>setNested('personalDetails','currentAddress',e.target.value)} /></Field>

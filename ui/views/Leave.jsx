@@ -98,7 +98,7 @@ export default function Leave() {
   }
 
   return <div className="nexus-page leave-v4">
-    <section className="directory-hero premium-hero leave-hero-v4 page-intro"><div><small>{showWfh?'LEAVE · WFH · COMP OFF · LOP':'LEAVE · COMP OFF · LOP'}</small><h1>Leave & Time Off</h1><p>Apply for leave or work from home, check balances, and approve your team's requests.</p></div><div className="hero-actions"><button className="primary" onClick={()=>openRequest()}>+ Request time off</button>{canApprove&&pending.length>0&&<span className="attention-badge">{pending.length} pending</span>}</div></section>
+    <section className="directory-hero premium-hero leave-hero-v4 page-intro"><div><small>{showWfh?'LEAVE · WFH · COMP OFF · LOP':'LEAVE · COMP OFF · LOP'}</small><h1>Leave & Time Off</h1><p>{showWfh ? 'Apply for leave or work from home, check balances, and approve your team\'s requests.' : 'Apply for leave, check balances, and approve your team\'s requests.'}</p></div><div className="hero-actions"><button className="primary" onClick={()=>openRequest()}>+ Request time off</button>{canApprove&&pending.length>0&&<span className="attention-badge">{pending.length} pending</span>}</div></section>
     <ErrorBox error={error||requestError||policyError||grantError||balanceError}/>
 
     <section className="leave-balance-strip leave-balance-v4">

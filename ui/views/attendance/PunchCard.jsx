@@ -88,7 +88,7 @@ export default function PunchCard({ firstName, state, stateError, onPunch, punch
               </button>
             )}
             {state && !canPunchHere && !state.completed && (
-              <span className="att-chip"><Icon name="Fingerprint" size={14} /> Punch on the biometric device — your attendance syncs here automatically</span>
+              <span className="att-chip"><Icon name="Fingerprint" size={14} /> Punch on the fingerprint machine. Your attendance shows here by itself.</span>
             )}
             <button type="button" className="att-ghost-btn" onClick={onRequestCorrection}><Icon name="PenLine" size={15} /> Request a correction</button>
           </div>

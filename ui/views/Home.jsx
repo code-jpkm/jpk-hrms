@@ -155,7 +155,7 @@ function TodayCard() {
           <div className="home-card-actions">
             {canPunchHere && state.canCheckIn && <button type="button" className="accent-btn home-punch" onClick={() => punch('in')} disabled={busy}><Icon name="LogIn" size={16} /> {busy ? 'Locating you…' : 'Check in'}</button>}
             {canPunchHere && state.canCheckOut && <button type="button" className="primary home-punch" onClick={() => punch('out')} disabled={busy}><Icon name="LogOut" size={16} /> {busy ? 'Locating you…' : 'Check out'}</button>}
-            {!canPunchHere && !state.completed && <p className="home-note"><Icon name="Fingerprint" size={14} /> Punch on the biometric machine. It shows here automatically.</p>}
+            {!canPunchHere && !state.completed && <p className="home-note"><Icon name="Fingerprint" size={14} /> Punch on the fingerprint machine. Your attendance shows here by itself.</p>}
           </div>
           {message && <p className={`home-note ${message.tone}`}>{message.text}</p>}
         </>

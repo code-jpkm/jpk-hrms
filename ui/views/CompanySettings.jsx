@@ -18,10 +18,28 @@ export default function CompanySettings() {
   const [sites, setSites] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState(null);
+  const [fingerprintOnly, setFingerprintOnly] = useState(true);
+  const [savingMode, setSavingMode] = useState(false);
 
   useEffect(() => {
     if (data?.tenant?.sites) setSites(data.tenant.sites.map((s) => ({ ...s })));
+    if (data?.tenant?.attendance) setFingerprintOnly(data.tenant.attendance.factoryFingerprintOnly !== false);
   }, [data]);
+
+  async function saveFingerprintOnly(value) {
+    setError(null); setMessage(''); setSavingMode(true);
+    try {
+      await api('/company-settings/attendance', {
+        method: 'PUT',
+        body: JSON.stringify({ factoryFingerprintOnly: value }),
+        successMessage: value
+          ? 'Factory staff now use the fingerprint machine only.'
+          : 'Factory staff can now be given phone attendance, one person at a time, on the employee page.'
+      });
+      setFingerprintOnly(value);
+      reload();
+    } catch (err) { setError(err); } finally { setSavingMode(false); }
+  }
 
   function updateSite(index, key, value) {
     setSites((rows) => rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
@@ -62,6 +80,13 @@ export default function CompanySettings() {
       <ErrorBox error={error || loadError} />
 
       {canManage && <IntegrationsShortcut />}
+
+      <Card title="Factory attendance">
+        <label className="switch-row compact-switch">
+          <input type="checkbox" checked={fingerprintOnly} disabled={!canManage || savingMode} onChange={(e) => saveFingerprintOnly(e.target.checked)} />
+          <span><b>Factory staff use the fingerprint machine only</b><small>On (recommended): factory employees never see phone check-in, geofencing, anywhere attendance or work from home in the website or the app. Their attendance comes from the fingerprint machine.</small></span>
+        </label>
+      </Card>
 
       <Card title="Geofence sites for mobile attendance" actions={canManage && <button onClick={addSite}>Add site</button>}>
         <p className="muted small">Create office/factory geofence locations here. Employees with <strong>Geofencing enabled</strong> can mark mobile attendance only inside one active site radius. Employees with <strong>Anywhere attendance</strong> can mark attendance from any location.</p>

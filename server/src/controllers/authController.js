@@ -10,6 +10,7 @@ const PasswordResetToken = require('../models/PasswordResetToken');
 const { createCaptcha, verifyCaptcha } = require('../services/captchaService');
 const { assertStrongPassword } = require('../services/loginAccessService');
 const { notify } = require('../services/messaging/dispatcher');
+const { employeeForSelf, isFingerprintOnly } = require('../services/attendanceModeService');
 
 // Compared against when no login matches, so a wrong email takes as long as a
 // wrong password (no "this email exists" timing hint).
@@ -182,5 +183,8 @@ exports.resetPassword = asyncHandler(async (req, res) => {
 });
 
 exports.me = asyncHandler(async (req, res) => {
-  res.json({ user: req.user, employee: req.employee });
+  // Factory staff on fingerprint-only see their phone/WFH switches as off, and the
+  // apps read employee.fingerprintOnly to leave every mention of them out.
+  const employee = req.employee ? employeeForSelf(req.employee, await isFingerprintOnly(req.employee, req.tenantId)) : req.employee;
+  res.json({ user: req.user, employee });
 });

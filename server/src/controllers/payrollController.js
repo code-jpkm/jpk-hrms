@@ -25,6 +25,7 @@ const { randomToken, hashToken } = require('../utils/security');
 const env = require('../config/env');
 const { hasAbility } = require('../middleware/auth');
 const { notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
+const { payrollLockOn, isMonthOpen, monthOpensOn, companyTodayKey, lockedReason, monthName } = require('../services/payrollLockService');
 
 function csvEscape(value) {
   const text = value === undefined || value === null ? '' : String(value);
@@ -320,13 +321,25 @@ exports.upsertRule = asyncHandler(async (req, res) => {
   res.json({ rule });
 });
 
+/** When each month's payroll opens, so the page can say "opens on 1 December 2026". */
+function withOpening(run, rule) {
+  const plain = typeof run.toObject === 'function' ? run.toObject() : { ...run };
+  plain.opensOn = monthOpensOn(plain.month);
+  plain.open = !payrollLockOn(rule) || isMonthOpen(plain.month);
+  return plain;
+}
+
 exports.runs = asyncHandler(async (req, res) => {
-  const runs = await PayrollRun.find({ tenantId: req.tenantId }).sort('-month');
-  if (['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role)) return res.json({ runs });
+  const [runDocs, rule] = await Promise.all([
+    PayrollRun.find({ tenantId: req.tenantId }).sort('-month'),
+    PayrollRule.findOne({ tenantId: req.tenantId, active: true }).select('lockUntilMonthEnds').lean()
+  ]);
+  const runs = runDocs.map((run) => withOpening(run, rule));
+  const lock = { on: payrollLockOn(rule), today: companyTodayKey() };
+  if (['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role)) return res.json({ runs, lock });
   const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
-  const scopedRuns = await Promise.all(runs.map(async (runDoc) => {
-    const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: runDoc._id, employeeId: { $in: allowed } }).select('earnings deductions netPay');
-    const run = runDoc.toObject();
+  const scopedRuns = await Promise.all(runs.map(async (run) => {
+    const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id, employeeId: { $in: allowed } }).select('earnings deductions netPay');
     run.summary = {
       employeeCount: slips.length,
       grossTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.earnings?.total ?? slip.earnings?.proratedGross ?? 0), 0)),
@@ -335,7 +348,7 @@ exports.runs = asyncHandler(async (req, res) => {
     };
     return run;
   }));
-  res.json({ runs: scopedRuns });
+  res.json({ runs: scopedRuns, lock });
 });
 
 exports.runPayroll = asyncHandler(async (req, res) => {
@@ -343,8 +356,12 @@ exports.runPayroll = asyncHandler(async (req, res) => {
   if (!/^\d{4}-\d{2}$/.test(month || '')) throw new ApiError(400, 'month must be YYYY-MM');
   const rule = await PayrollRule.findOne({ tenantId: req.tenantId, active: true });
   if (!rule) throw new ApiError(400, 'Create a payroll rule first');
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  // Company clock, not the server's (UTC): 1 December starts at midnight India time.
+  const currentMonth = companyTodayKey().slice(0, 7);
   if (month > currentMonth) throw new ApiError(400, 'Payroll cannot be generated for a future month');
+  // Payroll lock (on by default): a month's payroll opens on the 1st of the next month.
+  const locked = lockedReason(rule, month);
+  if (locked) throw new ApiError(400, locked, { code: 'PAYROLL_MONTH_LOCKED', opensOn: monthOpensOn(month) });
 
   // v26: re-running a month silently reset a RELEASED run to DRAFT and rewrote
   // slips employees had already received. Only Super Admin may regenerate a
@@ -426,6 +443,10 @@ exports.releaseRun = asyncHandler(async (req, res) => {
   const run = await PayrollRun.findOne({ _id: req.params.runId, tenantId: req.tenantId });
   if (!run) throw new ApiError(404, 'Payroll run not found');
   if (run.status === 'FINALIZED') return res.json({ run, message: `Payroll for ${run.month} is already released` });
+  // A draft made before the lock existed (or while it was off) still waits for the month to end.
+  const rule = await PayrollRule.findOne({ tenantId: req.tenantId, active: true }).select('lockUntilMonthEnds').lean();
+  const locked = lockedReason(rule, run.month);
+  if (locked) throw new ApiError(400, locked, { code: 'PAYROLL_MONTH_LOCKED', opensOn: monthOpensOn(run.month) });
 
   const before = run.toObject();
   run.status = 'FINALIZED';
@@ -449,6 +470,46 @@ exports.releaseRun = asyncHandler(async (req, res) => {
   res.json({ run, message: `Payroll for ${run.month} released. No one was notified; send payslips when they are ready.` });
 });
 
+/**
+ * DELETE /api/payroll/runs/:runId — removes a payroll month and all its salary
+ * slips (a test run, or one made too early). Attendance, salary masters and
+ * loans are not touched; the month can be generated again later. A released
+ * month can only be deleted by Super Admin, with a reason. Every delete is
+ * recorded in the audit log with the totals that were removed.
+ */
+exports.deleteRun = asyncHandler(async (req, res) => {
+  const run = await PayrollRun.findOne({ _id: req.params.runId, tenantId: req.tenantId });
+  if (!run) throw new ApiError(404, 'Payroll run not found');
+  const reason = String(req.body?.reason || '').trim();
+  if (run.status === 'FINALIZED') {
+    if (req.user.role !== 'SUPER_ADMIN') throw new ApiError(409, `Payroll for ${monthName(run.month)} is released. Only Super Admin can delete a released month.`);
+    if (!reason) throw new ApiError(400, 'Type a reason to delete a released payroll month');
+  }
+  const slips = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id }).select('employeeId netPay lastSharedAt').lean();
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  if (slips.some((slip) => !allowed.includes(String(slip.employeeId)))) {
+    throw new ApiError(403, 'Deleting a payroll month needs salary access to everyone in it (Office and Factory).');
+  }
+  const removed = await SalarySlip.deleteMany({ tenantId: req.tenantId, payrollRunId: run._id });
+  await run.deleteOne();
+  await RuleAudit.create({
+    tenantId: req.tenantId,
+    module: 'PAYROLL',
+    action: run.status === 'FINALIZED' ? 'DELETE_RELEASED_PAYROLL' : 'DELETE_PAYROLL_DRAFT',
+    targetId: String(run._id),
+    before: {
+      run: run.toObject(),
+      slips: slips.length,
+      netTotal: roundMoney(slips.reduce((sum, slip) => sum + Number(slip.netPay || 0), 0)),
+      sentToEmployees: slips.filter((slip) => slip.lastSharedAt).length
+    },
+    after: { deleted: true, slipsRemoved: removed.deletedCount || 0 },
+    reason: reason || `Payroll ${run.month} draft deleted`,
+    changedBy: req.user._id
+  });
+  res.json({ deleted: true, month: run.month, slipsRemoved: removed.deletedCount || 0, message: `${monthName(run.month)} payroll deleted with its ${removed.deletedCount || 0} salary slip(s). Attendance, salaries and loans are unchanged.` });
+});
+
 exports.slips = asyncHandler(async (req, res) => {
   const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
   const q = { tenantId: req.tenantId, employeeId: { $in: allowed } };
@@ -466,7 +527,9 @@ exports.slips = asyncHandler(async (req, res) => {
     .populate('payrollRunId', 'month status releasedAt')
     .sort('-month');
   if (!isPayrollAdmin) {
-    slips = slips.filter((slip) => slip.payrollRunId?.status === 'FINALIZED');
+    // Released only, and never for a month that has not ended while payroll is locked.
+    const rule = await PayrollRule.findOne({ tenantId: req.tenantId, active: true }).select('lockUntilMonthEnds').lean();
+    slips = slips.filter((slip) => slip.payrollRunId?.status === 'FINALIZED' && (!payrollLockOn(rule) || isMonthOpen(slip.month)));
   }
   // Employees get the payslip as paid, with its note: not the calculation
   // behind HR's edits, who edited it, or the share-link token hash.

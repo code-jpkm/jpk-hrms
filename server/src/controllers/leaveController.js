@@ -16,6 +16,7 @@ const { evaluateAttendanceRecord } = require('../services/attendanceRulesService
 const { settleAttendanceChange, withPayrollNote } = require('../services/attendanceChangeService');
 const { notifyUser, notifyEmployee, notifyRoles } = require('../services/inAppNotificationService');
 const { readWorkbookRows, workbookBuffer, parseImportMonth } = require('../utils/excel');
+const { isFingerprintOnly } = require('../services/attendanceModeService');
 
 function inclusiveDays(from, to, dayPart = 'FULL') {
   const a = startOfDay(from);
@@ -338,7 +339,7 @@ async function submitLeaveRequest(req, input = {}) {
   if (to < from) throw new ApiError(400, 'The end date cannot be before the start date');
   if ((to - from) / 86400000 > 92) throw new ApiError(400, 'A single request can cover at most 3 months. Split longer absences.');
   if (dayPart !== 'FULL' && to.getTime() !== from.getTime()) throw new ApiError(400, 'Half-day requests must be for a single date');
-  if (requestType === 'WFH' && employee.canApplyWfh !== true) throw new ApiError(403, 'Work from home is not enabled for this employee');
+  if (requestType === 'WFH' && (employee.canApplyWfh !== true || await isFingerprintOnly(employee, req.tenantId))) throw new ApiError(403, 'Work from home is not enabled for this employee');
   const days = inclusiveDays(from, to, dayPart);
 
   // Overlapping requests double-booked the same days (and the same balance).

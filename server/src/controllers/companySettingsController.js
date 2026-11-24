@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/apiError');
 const Tenant = require('../models/Tenant');
 const { recordAudit } = require('../services/auditService');
+const { factoryFingerprintOnlyOn, switchOffFactoryPhoneAttendance } = require('../services/attendanceModeService');
 
 function sanitizeSite(site = {}) {
   const name = String(site.name || '').trim();
@@ -33,9 +34,36 @@ exports.getCompanySettings = asyncHandler(async (req, res) => {
       code: tenant.code,
       status: tenant.status,
       sites: tenant.sites || [],
-      salarySlipFormat: tenant.salarySlipFormat || {}
+      salarySlipFormat: tenant.salarySlipFormat || {},
+      attendance: { factoryFingerprintOnly: factoryFingerprintOnlyOn(tenant) }
     }
   });
+});
+
+/**
+ * PUT /api/company-settings/attendance — { factoryFingerprintOnly }.
+ * Turning it on also switches off phone check-in, geofencing, anywhere and
+ * work from home for every factory employee, so nobody keeps an old switch.
+ */
+exports.saveAttendanceSettings = asyncHandler(async (req, res) => {
+  if (typeof req.body?.factoryFingerprintOnly !== 'boolean') throw new ApiError(400, 'factoryFingerprintOnly must be true or false');
+  const tenant = await Tenant.findById(req.tenantId);
+  if (!tenant) throw new ApiError(404, 'Tenant not found');
+  const before = { factoryFingerprintOnly: factoryFingerprintOnlyOn(tenant) };
+  tenant.set('attendance.factoryFingerprintOnly', req.body.factoryFingerprintOnly);
+  await tenant.save();
+  const switchedOff = req.body.factoryFingerprintOnly ? await switchOffFactoryPhoneAttendance(req.tenantId) : [];
+  await recordAudit({
+    tenantId: req.tenantId,
+    module: 'COMPANY_SETTINGS',
+    action: 'SAVE_FACTORY_FINGERPRINT_ONLY',
+    targetId: String(tenant._id),
+    before,
+    after: { factoryFingerprintOnly: req.body.factoryFingerprintOnly, switchedOff: switchedOff.map((e) => e.employeeCode) },
+    reason: req.body.reason || (req.body.factoryFingerprintOnly ? 'Factory staff use the fingerprint machine only' : 'Factory staff may use phone attendance when HR enables it per person'),
+    changedBy: req.user._id
+  });
+  res.json({ attendance: { factoryFingerprintOnly: req.body.factoryFingerprintOnly }, switchedOff: switchedOff.length });
 });
 
 exports.saveGeofenceSites = asyncHandler(async (req, res) => {

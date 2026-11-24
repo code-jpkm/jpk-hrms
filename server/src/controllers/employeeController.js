@@ -15,6 +15,7 @@ const { hasAbility } = require('../middleware/auth');
 const guard = require('../services/accountGuardService');
 const loginAccess = require('../services/loginAccessService');
 const adms = require('../services/admsService');
+const { MODE_FIELDS, isFactoryWorker, factoryFingerprintOnlyOn, tenantAttendanceSettings } = require('../services/attendanceModeService');
 
 
 function reviewMissingFields(employee) {
@@ -254,6 +255,12 @@ async function sanitizeEmployeePayload({ req, body = {}, existing, employeeId })
       if (!mongoose.isValidObjectId(managerId)) throw new ApiError(400, 'Invalid reporting manager');
       payload.reportsTo = await ensureManagerAssignmentIsValid({ tenantId: req.tenantId, employeeId: employeeId || existing?._id, reportsTo: managerId });
     }
+  }
+  // Factory staff mark attendance on the fingerprint machine only (Company Settings):
+  // their phone check-in, geofencing, anywhere and work-from-home switches stay off.
+  const workLocation = payload.workLocation !== undefined ? payload.workLocation : existing?.workLocation;
+  if (isFactoryWorker({ workLocation }) && factoryFingerprintOnlyOn(await tenantAttendanceSettings(req.tenantId))) {
+    for (const field of MODE_FIELDS) payload[field] = false;
   }
   return { payload, ignored };
 }

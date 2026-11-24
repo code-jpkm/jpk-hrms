@@ -154,6 +154,17 @@ function testJpkStatutoryAsGreytHR() {
   // Basic exactly 21,000: ESI applies.
   slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(21000, 9000) });
   assert.equal(slip.deductions.esi, 158);
+  // greytHR's October 2026 payslips with LOP: the LOP comes off Special Allowance, then Conveyance.
+  const parts = (basic, hra, conveyance, specialAllowance) => ({ calculationMode: 'RULE_BASED_DEDUCTIONS', earnings: { basic, hra, conveyance, specialAllowance, otherEarnings: 0 }, grossSalary: basic + hra + conveyance + specialAllowance, deductions: {} });
+  // OFC0022: 19,469, 3 LOP of 31 days -> Special 1,285, gross 17,585, PF 1,260, ESI 79, net 16,246.
+  slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 31, payableDays: 28 }, rule, salaryMaster: parts(10500, 4200, 1600, 3169) });
+  assert.deepEqual([slip.lop.amount, slip.specialAllowance, slip.proratedGross, slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax, slip.netPay], [1884, 1285, 17585, 1260, 79, 0, 16246]);
+  // FAC0030: 17,469, 4 LOP of 31 -> Special 0, Conveyance 515, gross 15,215, net 13,876.
+  slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 31, payableDays: 27 }, rule, salaryMaster: parts(10500, 4200, 1600, 1169) });
+  assert.deepEqual([slip.conveyance, slip.specialAllowance, slip.proratedGross, slip.netPay], [515, 0, 15215, 13876]);
+  // FAC0065 (wages): 29,213, 4.5 LOP of 27 -> Special 2,294, gross 24,344, PF 1,753, ESI 110, P.Tax 100, net 22,381.
+  slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 27, payableDays: 22.5 }, rule, salaryMaster: parts(14607, 5842.8, 1600, 7163.2) });
+  assert.deepEqual([slip.specialAllowance, slip.proratedGross, slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax, slip.netPay], [2294, 24344, 1753, 110, 100, 22381]);
   // The user's formula: IF(R<=20000,0,IF(R<=30000,100,IF(R<=50000,140,IF(R<=100000,170,208))))
   for (const [gross, tax] of [[0, 0], [20000, 0], [20000.4, 100], [20001, 100], [30000, 100], [30000.5, 140], [50000, 140], [50001, 170], [100000, 170], [100000.01, 208], [250000, 208]]) {
     assert.equal(ptaxForGross(gross, rule.ptax), tax, `P.Tax on ${gross}`);
@@ -188,6 +199,85 @@ function testLoanRecovery() {
   assert.equal(runsIn(a, '2026-10'), false);
 }
 
+function testPayrollLock() {
+  const { isMonthOpen, monthOpensOn, lockedReason, payrollLockOn, nextMonthKey } = require('../src/services/payrollLockService');
+  assert.equal(monthOpensOn('2026-11'), '2026-12-01');
+  assert.equal(monthOpensOn('2026-12'), '2027-01-01');
+  assert.equal(nextMonthKey('2027-01'), '2027-02');
+  // India time decides: 30 Nov 23:59 IST is still November; 1 Dec 00:00 IST opens it.
+  assert.equal(isMonthOpen('2026-11', new Date('2026-11-30T18:29:00Z')), false);
+  assert.equal(isMonthOpen('2026-11', new Date('2026-11-30T18:30:00Z')), true);
+  assert.equal(isMonthOpen('2026-10', new Date('2026-11-23T12:00:00Z')), true);
+  // On unless HR turned it off; a rule saved before the setting existed counts as on.
+  assert.equal(payrollLockOn(null), true);
+  assert.equal(payrollLockOn({}), true);
+  assert.equal(payrollLockOn({ lockUntilMonthEnds: false }), false);
+  assert.match(lockedReason({}, '2026-11', new Date('2026-11-23T12:00:00Z')), /November 2026 payroll opens on 1 December 2026/);
+  assert.equal(lockedReason({ lockUntilMonthEnds: false }, '2026-11', new Date('2026-11-23T12:00:00Z')), '');
+  assert.equal(lockedReason({}, '2026-10', new Date('2026-11-23T12:00:00Z')), '');
+}
+
+function testFactoryFingerprintOnly() {
+  const { fingerprintOnly, employeeForSelf, factoryFingerprintOnlyOn } = require('../src/services/attendanceModeService');
+  const factory = { workLocation: 'FACTORY', canUseGeofencing: true, canUseAnywhereAttendance: true, canApplyWfh: true };
+  const office = { workLocation: 'OFFICE', canUseGeofencing: true, canUseAnywhereAttendance: false, canApplyWfh: true };
+  assert.equal(factoryFingerprintOnlyOn(null), true);
+  assert.equal(factoryFingerprintOnlyOn({ attendance: {} }), true);
+  assert.equal(fingerprintOnly(factory, {}), true);
+  assert.equal(fingerprintOnly({ ...factory, workLocation: 'factory' }, {}), true);
+  assert.equal(fingerprintOnly(factory, { attendance: { factoryFingerprintOnly: false } }), false);
+  assert.equal(fingerprintOnly(office, {}), false);
+  assert.equal(fingerprintOnly({ workLocation: 'BOTH' }, {}), false);
+  const seen = employeeForSelf(factory, true);
+  assert.deepEqual([seen.canUseGeofencing, seen.canUseAnywhereAttendance, seen.canApplyWfh, seen.fingerprintOnly], [false, false, false, true]);
+  assert.equal(factory.canApplyWfh, true, 'the stored record is not changed');
+  const officeSeen = employeeForSelf(office, false);
+  assert.deepEqual([officeSeen.canUseGeofencing, officeSeen.canApplyWfh, officeSeen.fingerprintOnly], [true, true, false]);
+}
+
+// October 2026 at JPK: holidays 2, 19, 20, 21 (Fri, Mon, Tue, Wed). A WAGES
+// worker present on every other non-Sunday is paid all 27 days, as in greytHR.
+async function testWagesHolidayIsPaid() {
+  const Holiday = require('../src/models/Holiday');
+  const ShiftAssignment = require('../src/models/ShiftAssignment');
+  const Attendance = require('../src/models/Attendance');
+  const { attendanceStatsFor } = require('../src/services/payrollSlipService');
+  const { monthRange, eachDate, dateKey } = require('../src/utils/date');
+  const saved = { holiday: Holiday.find, assignment: ShiftAssignment.find, attendance: Attendance.find };
+  const holidayDays = ['2026-10-02', '2026-10-19', '2026-10-20', '2026-10-21'];
+  const { from, to } = monthRange('2026-10');
+  const worked = eachDate(from, to).filter((d) => d.getDay() !== 0 && !holidayDays.includes(dateKey(d)));
+  Holiday.find = async () => holidayDays.map((day) => ({ date: new Date(`${day}T00:00:00Z`), name: 'Puja', location: 'ALL' }));
+  ShiftAssignment.find = () => ({ populate: () => ({ sort: async () => [] }) });
+  Attendance.find = async () => worked.map((date) => ({ date, status: 'PRESENT', lopDays: 0 }));
+  try {
+    const base = { _id: 'e1', workLocation: 'FACTORY', dateOfJoining: new Date('2020-01-01') };
+    const wages = await attendanceStatsFor({ ...base, employeeCategory: 'WAGES' }, '2026-10', 't1');
+    assert.equal(worked.length, 23);
+    assert.deepEqual([wages.workingDays, wages.payableDays, wages.attendanceLopDays, wages.missingAbsentDays], [27, 27, 0, 0]);
+    // Salaried: one LOP day is the salary ÷ all 31 days, like JPK's payslips and greytHR.
+    const salaried = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED' }, '2026-10', 't1');
+    assert.deepEqual([salaried.workingDays, salaried.payableDays, salaried.attendanceLopDays, salaried.scheduledWorkingDays, salaried.dayBasis], [31, 31, 0, 23, 'CALENDAR_DAYS']);
+    const byWorking = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED' }, '2026-10', 't1', { lopDayBasis: 'WORKING_DAYS' });
+    assert.deepEqual([byWorking.workingDays, byWorking.payableDays, byWorking.dayBasis], [23, 23, 'WORKING_DAYS']);
+    // Joined on 5 Oct: paid on the 27 days from joining (greytHR FAC0098).
+    const joiner = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED', dateOfJoining: new Date(2026, 9, 5) }, '2026-10', 't1');
+    assert.deepEqual([joiner.workingDays, joiner.payableDays], [27, 27]);
+    // A non-holiday day with no attendance is still LOP.
+    Attendance.find = async () => worked.slice(1).map((date) => ({ date, status: 'PRESENT', lopDays: 0 }));
+    const oneAbsent = await attendanceStatsFor({ ...base, employeeCategory: 'WAGES' }, '2026-10', 't1');
+    assert.deepEqual([oneAbsent.attendanceLopDays, oneAbsent.payableDays, oneAbsent.dayBasis], [1, 26, 'DAYS_LESS_SUNDAYS']);
+    const oneAbsentSalaried = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED' }, '2026-10', 't1');
+    assert.deepEqual([oneAbsentSalaried.attendanceLopDays, oneAbsentSalaried.payableDays], [1, 30]);
+  } finally {
+    Holiday.find = saved.holiday;
+    ShiftAssignment.find = saved.assignment;
+    Attendance.find = saved.attendance;
+  }
+}
+
+testPayrollLock();
+testFactoryFingerprintOnly();
 testAttendanceClassification();
 testIndiaShiftWindowOnUtcServer();
 testShiftEditDoesNotKeepStaleFullDayThreshold();
@@ -195,4 +285,6 @@ testSalaryProrationAndDeductions();
 testJpkSamplePayslipInWholeRupees();
 testJpkStatutoryAsGreytHR();
 testLoanRecovery();
-console.log('PASS: attendance classification and payroll calculation core tests');
+testWagesHolidayIsPaid()
+  .then(() => console.log('PASS: attendance classification and payroll calculation core tests'))
+  .catch((error) => { console.error(error); process.exit(1); });

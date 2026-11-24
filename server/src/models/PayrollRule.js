@@ -28,6 +28,14 @@ const payrollRuleSchema = new mongoose.Schema({
   customDeductions: [{ name: String, amount: Number, percent: Number, calculationBase: { type: String, enum: ['BASIC', 'GROSS'], default: 'GROSS' }, enabled: { type: Boolean, default: true } }],
   // Whole rupees on every slip line (LOP, components, PF / ESI / PT), like JPK's own payslips.
   roundToRupee: { type: Boolean, default: true },
+  // A month's payroll opens on the 1st of the next month (November's on 1 December),
+  // and employees never see a payslip for a month that has not ended.
+  lockUntilMonthEnds: { type: Boolean, default: true },
+  // What a month's salary is divided by for one LOP day. CALENDAR_DAYS: every
+  // day of the month (31 in October), as on JPK's payslips and in greytHR.
+  // WORKING_DAYS: only the scheduled working days (no Sundays / holidays).
+  // WAGES staff always use the days less Sundays.
+  lopDayBasis: { type: String, enum: ['CALENDAR_DAYS', 'WORKING_DAYS'], default: 'CALENDAR_DAYS' },
   notes: String
 }, { timestamps: true });
 

@@ -25,6 +25,7 @@ router.post('/loans/:id/close', requireAbility('PAYROLL', 'UPDATE_SALARY_MASTER'
 router.get('/runs', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.runs);
 router.post('/run', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.runPayroll);
 router.post('/runs/:runId/release', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.releaseRun);
+router.delete('/runs/:runId', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.deleteRun);
 router.get('/runs/:runId/salary-sheet', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheet);
 router.get('/runs/:runId/salary-sheet.csv', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheetCsv);
 router.get('/runs/:runId/salary-sheet.pdf', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheetPdf);
