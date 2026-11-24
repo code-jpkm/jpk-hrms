@@ -7,6 +7,7 @@ import { DateTimeField, addDaysToKey } from '../../components/DateTimePicker.jsx
 import { formatDayKey, formatTime, formatPunch, durationLabel, parseHHMM, istMinutes, toIstInputValue, clockLabel, monthLabel } from '../../utils/time.js';
 import { statusMeta, LEAVE_NAMES } from './meta.js';
 import PunchPlaces from './PunchPlace.jsx';
+import ShiftPicker from '../../components/ShiftPicker.jsx';
 
 function ShiftTimeline({ day }) {
   const data = useMemo(() => {
@@ -207,9 +208,9 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
 
   const shifts = shiftsData?.shifts || [];
   const balances = (balanceData?.balances || []).filter((b) => String(b.leaveType).toUpperCase() !== 'LOP');
-  const backRow = (label, icon = 'Save') => (
+  const backRow = (label, icon = 'Save', blocked = false) => (
     <div className="att-action-row">
-      <button className="att-btn" disabled={busy}><Icon name={icon} size={16} /> {busy ? 'Saving…' : label}</button>
+      <button className="att-btn" disabled={busy || blocked}><Icon name={icon} size={16} /> {busy ? 'Saving…' : label}</button>
       <button type="button" className="att-btn secondary" onClick={() => { setMode('view'); setError(''); }}>Back</button>
     </div>
   );
@@ -411,19 +412,17 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
           {mode === 'shift' && (
             <form className="att-form att-box" onSubmit={(e) => { e.preventDefault(); act({ action: 'SHIFT', shiftId: shiftForm.shiftId, scope: shiftForm.scope }); }}>
               <h4>Change shift</h4>
-              <label>Shift
-                <select required value={shiftForm.shiftId} onChange={(e) => setShiftForm({ ...shiftForm, shiftId: e.target.value })}>
-                  <option value="" disabled>{shiftsData ? 'Choose a shift' : 'Loading shifts…'}</option>
-                  {shifts.filter((s) => s.active !== false).map((s) => <option key={s._id} value={s._id}>{s.name} · {clockLabel(s.startTime)}–{clockLabel(s.endTime)}{s.graceMinutes ? ` · ${s.graceMinutes} min grace` : ''}</option>)}
-                </select>
-              </label>
+              <div className="att-field">
+                <span id="day-shift-label">Shift</span>
+                <ShiftPicker shifts={shifts.filter((s) => s.active !== false)} value={shiftForm.shiftId} onChange={(id) => setShiftForm((f) => ({ ...f, shiftId: id }))} currentId={day.shiftId || ''} loading={!shiftsData} labelledBy="day-shift-label" id="day-shift" autoFocus />
+              </div>
               <div className="att-choice two" role="radiogroup" aria-label="Apply to">
                 <button type="button" role="radio" aria-checked={shiftForm.scope === 'DAY'} className={shiftForm.scope === 'DAY' ? 'is-on' : ''} onClick={() => setShiftForm({ ...shiftForm, scope: 'DAY' })}><b>Only this day</b><small>{formatDayKey(day.date, { day: 'numeric', month: 'short' })}</small></button>
                 <button type="button" role="radio" aria-checked={shiftForm.scope === 'ONWARDS'} className={shiftForm.scope === 'ONWARDS' ? 'is-on' : ''} onClick={() => setShiftForm({ ...shiftForm, scope: 'ONWARDS' })}><b>From this day on</b><small>Becomes the regular shift</small></button>
               </div>
               <small className="att-form-note">Late, early and LOP are recalculated with the new shift times.</small>
               {errorBox}
-              {backRow('Save shift', 'CalendarClock')}
+              {backRow('Save shift', 'CalendarClock', !shiftForm.shiftId)}
             </form>
           )}
 

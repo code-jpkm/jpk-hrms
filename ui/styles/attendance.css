@@ -552,3 +552,4 @@
   .att-viewing{flex-wrap:wrap;gap:10px}
   .att-viewing-state{white-space:normal;width:100%;justify-content:flex-start}
 }
+.att-form .att-field{display:grid;gap:6px;font-size:12px;font-weight:600;color:var(--att-soft)}
