@@ -147,3 +147,7 @@
 .loans-toggle{margin-top:8px}
 .loans-help{margin:10px 0 0;font-size:12px;color:#807F84;line-height:1.45}
 @media (max-width:640px){.loans-summary{grid-template-columns:1fr}}
+.payroll-statement-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;border:1px solid #E1E1E4;border-radius:10px;background:#F7F9FB}
+.payroll-statement-row>span{display:flex;align-items:center;gap:6px;flex:1 1 100%;font-size:13px;font-weight:600;color:#1F3445}
+.payroll-statement-row button{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;border:1px solid #E1E1E4;background:#FFFFFF;color:#1F3445;font-weight:600;font-size:12.5px;cursor:pointer}
+.payroll-statement-row button:hover{border-color:#1F3445}

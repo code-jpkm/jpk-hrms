@@ -13,6 +13,7 @@ import MonthCalendar from './attendance/MonthCalendar.jsx';
 import DayDrawer from './attendance/DayDrawer.jsx';
 import TeamBoard from './attendance/TeamBoard.jsx';
 import Insights from './attendance/Insights.jsx';
+import Reports from './attendance/Reports.jsx';
 import { statusMeta, downloadCsv } from './attendance/meta.js';
 
 function EmployeePicker({ employees, value, onChange, selfId }) {
@@ -118,7 +119,7 @@ export default function Attendance() {
   // Deep links: /attendance#team, /attendance#insights
   useEffect(() => {
     const h = routeLocation.hash.replace('#', '');
-    if (['team', 'insights', 'calendar'].includes(h)) setTab(h);
+    if (['team', 'insights', 'calendar', 'reports'].includes(h)) setTab(h);
   }, [routeLocation.hash]);
 
   const calendarPath = calendarEmployeeId ? `/attendance/calendar?month=${month}&employeeId=${calendarEmployeeId}` : '';
@@ -200,28 +201,30 @@ export default function Attendance() {
             <button type="button" role="tab" className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}><Icon name="CalendarDays" size={15} /> {isSelf ? 'My calendar' : 'Calendar'}{issues ? <em>{issues}</em> : null}</button>
             {canSeeOthers && <button type="button" role="tab" className={tab === 'team' ? 'active' : ''} onClick={() => setTab('team')}><Icon name="Users" size={15} /> Team today</button>}
             <button type="button" role="tab" className={tab === 'insights' ? 'active' : ''} onClick={() => setTab('insights')}><Icon name="Sparkles" size={15} /> Insights</button>
+            {canSeeOthers && <button type="button" role="tab" className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}><Icon name="FileSpreadsheet" size={15} /> Reports</button>}
           </div>
           <div className="att-toolbar">
             {canSeeOthers && <div className="att-seg">{['ALL', 'OFFICE', 'FACTORY'].map((p) => <button type="button" key={p} className={place === p ? 'active' : ''} onClick={() => setPlace(p)}>{p === 'ALL' ? 'All' : p === 'OFFICE' ? 'Office' : 'Factory'}</button>)}</div>}
             {tab !== 'team' && <>
-              {canSeeOthers && <EmployeePicker employees={scoped} value={calendarEmployeeId} onChange={(id) => { setCalendarEmployeeId(id); setSelectedDay(null); }} selfId={employee?._id} />}
+              {canSeeOthers && tab !== 'reports' && <EmployeePicker employees={scoped} value={calendarEmployeeId} onChange={(id) => { setCalendarEmployeeId(id); setSelectedDay(null); }} selfId={employee?._id} />}
               <div className="att-month-nav">
                 <button type="button" onClick={() => setMonth((m) => shiftMonth(m, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
                 <strong>{monthLabel(month)}</strong>
                 <button type="button" onClick={() => setMonth((m) => shiftMonth(m, 1))} disabled={month >= currentMonthKey()} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
               </div>
               {month !== currentMonthKey() && <button type="button" className="att-today-btn" onClick={() => setMonth(currentMonthKey())}>This month</button>}
-              <button type="button" className="att-icon-btn" onClick={exportMonth} disabled={!calendar?.days?.length}><Icon name="Download" size={14} /> CSV</button>
+              {tab !== 'reports' && <button type="button" className="att-icon-btn" onClick={exportMonth} disabled={!calendar?.days?.length}><Icon name="Download" size={14} /> CSV</button>}
               {canEvaluate && <button type="button" className="att-icon-btn" onClick={recalculate} title="Re-apply attendance rules to every day of this month"><Icon name="RefreshCw" size={14} /> Recalculate</button>}
             </>}
           </div>
         </div>
 
-        {calendarError && tab !== 'team' && <div className="att-alert" style={{ margin: 16 }}><Icon name="TriangleAlert" size={16} /><div>{calendarError.message}</div></div>}
+        {calendarError && tab !== 'team' && tab !== 'reports' && <div className="att-alert" style={{ margin: 16 }}><Icon name="TriangleAlert" size={16} /><div>{calendarError.message}</div></div>}
 
         {tab === 'calendar' && <MonthCalendar days={calendar?.days || []} loading={calendarLoading} onOpen={setSelectedDay} showWfh={showWfh} />}
         {tab === 'team' && canSeeOthers && <TeamBoard location={place} canMessage={canMessage} onOpenPerson={(id) => { setCalendarEmployeeId(id); setMonth(currentMonthKey()); setTab('calendar'); }} />}
         {tab === 'insights' && <Insights calendar={calendar} month={month} employeeId={calendarEmployeeId} />}
+        {tab === 'reports' && canSeeOthers && <Reports month={month} place={place} />}
       </section>
 
       {selectedDay && (

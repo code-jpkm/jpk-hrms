@@ -23,6 +23,7 @@ const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
 const Regularization = require('../models/Regularization');
 const { fingerprintOnly, isFingerprintOnly } = require('../services/attendanceModeService');
+const { punchLocations } = require('../utils/punchLocation');
 
 async function getOwnEmployee(req) {
   const employee = req.employee;
@@ -144,6 +145,7 @@ exports.teamToday = asyncHandler(async (req, res) => {
     else state = 'MISSING';
     // Same rule as payroll: inside the grace is on time (10:14:59 with a 10:00 start and 15 min).
     const lateMinutes = r?.checkIn && window ? lateMinutesAfterGrace(window.start, r.checkIn, effectiveGraceMinutes(policy, shift)) : 0;
+    const where = punchLocations(r);
     return {
       employeeId: id,
       employeeCode: e.employeeCode,
@@ -159,6 +161,9 @@ exports.teamToday = asyncHandler(async (req, res) => {
       workedMinutes: r?.checkIn ? minutesBetween(r.checkIn, r.checkOut || (key === dateKey(today) ? now : r.checkIn)) : 0,
       source: r?.source || '',
       siteName: r?.location?.siteName || '',
+      // Exact phone location of each punch, with a Google Maps link.
+      checkInLocation: where.in,
+      checkOutLocation: where.out,
       leaveType: leave ? (leave.requestType === 'WFH' ? 'WFH' : leave.leaveType) : '',
       holidayName: holiday?.name || '',
       shiftName: shift?.name || '',
@@ -248,12 +253,18 @@ async function getMobileAttendanceContext(req) {
 }
 
 async function mobileMark(req, mode) {
-  const { lat, lng, address } = req.body;
+  const { lat, lng, address, accuracy } = req.body;
   const latNumber = Number(lat);
   const lngNumber = Number(lng);
-  if (!Number.isFinite(latNumber) || !Number.isFinite(lngNumber)) {
+  if (!Number.isFinite(latNumber) || !Number.isFinite(lngNumber) || Math.abs(latNumber) > 90 || Math.abs(lngNumber) > 180) {
     throw new ApiError(400, 'Valid latitude and longitude are required');
   }
+  // The phone's own accuracy for the point, in metres (kept with the punch so HR
+  // can see how exact the location is).
+  const accuracyNumber = Number(accuracy);
+  const accuracyMeters = accuracy !== undefined && accuracy !== null && accuracy !== '' && Number.isFinite(accuracyNumber) && accuracyNumber >= 0
+    ? Math.round(accuracyNumber * 10) / 10
+    : undefined;
 
   const context = await getMobileAttendanceContext(req);
   const { employee, now, attendanceDate, attendance: current } = context;
@@ -296,7 +307,8 @@ async function mobileMark(req, mode) {
   const location = {
     lat: point.lat,
     lng: point.lng,
-    address,
+    ...(accuracyMeters !== undefined ? { accuracy: accuracyMeters } : {}),
+    address: address ? String(address).slice(0, 300) : undefined,
     siteName: site?.name,
     distanceMeters: site?.distanceMeters
   };

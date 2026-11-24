@@ -35,6 +35,7 @@ export { default as LayoutGrid } from 'lucide-react-native/dist/esm/icons/layout
 export { default as ListTree } from 'lucide-react-native/dist/esm/icons/list-tree';
 export { default as LogIn } from 'lucide-react-native/dist/esm/icons/log-in';
 export { default as LogOut } from 'lucide-react-native/dist/esm/icons/log-out';
+export { default as MapPin } from 'lucide-react-native/dist/esm/icons/map-pin';
 export { default as Maximize2 } from 'lucide-react-native/dist/esm/icons/maximize-2';
 export { default as Megaphone } from 'lucide-react-native/dist/esm/icons/megaphone';
 export { default as Minus } from 'lucide-react-native/dist/esm/icons/minus';

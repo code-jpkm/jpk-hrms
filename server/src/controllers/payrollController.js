@@ -14,6 +14,8 @@ const RuleAudit = require('../models/RuleAudit');
 const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, holidayAppliesTo, companyToday } = require('../utils/date');
 const { calculateSalary, calculateStatutoryDeductions, roundMoney } = require('../utils/salary');
 const { readWorkbookRows, workbookBuffer } = require('../utils/excel');
+const { workbookBuffer: xlsxBook, columnLetter } = require('../utils/xlsxWriter');
+const Tenant = require('../models/Tenant');
 const { getActiveSalaryMastersMap } = require('../services/salaryMasterService');
 const { buildSlip, recalculateRunSummary } = require('../services/payrollSlipService');
 const { applySlipEdits, calculatedOf, payslipLines, editsFromRequest, rupeesInWords } = require('../services/payslipModel');
@@ -556,6 +558,57 @@ exports.salarySheetCsv = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=salary-sheet-${run.month}.csv`);
   res.send([headers.join(','), ...body].join('\n'));
+});
+
+/**
+ * The salary statement as an Excel file: one row per person with the same
+ * columns as the CSV, a title, and live totals (SUM formulas) at the bottom.
+ */
+exports.salarySheetXlsx = asyncHandler(async (req, res) => {
+  const { run, rows } = await salarySheetRows(req, req.params.runId);
+  const [tenant, rule] = await Promise.all([
+    Tenant.findById(req.tenantId).select('name').lean(),
+    PayrollRule.findOne({ tenantId: req.tenantId, active: true }).select('roundToRupee').lean()
+  ]);
+  const money = rule?.roundToRupee === false ? '#,##0.00' : '#,##0';
+  const headers = ['Employee Code', 'Name', 'Department', 'Designation', 'Working Days', 'Payable Days', 'LOP Days', 'Basic', 'HRA', 'Conveyance', 'Special Allowance', 'Other Earnings', 'Gross', 'PF', 'ESI', 'PTax', 'Loan', 'Other Deductions', 'Total Deductions', 'Net Pay'];
+  const sorted = [...rows].sort((a, b) => String(a.employeeCode).localeCompare(String(b.employeeCode), 'en', { numeric: true }));
+  const status = run.status === 'FINALIZED'
+    ? `Released${run.releasedAt ? ` on ${new Date(run.releasedAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`
+    : 'Draft (not released)';
+  const headerRow = 3;
+  const firstData = headerRow + 1;
+  const lastData = headerRow + sorted.length;
+  const body = sorted.map((r) => [r.employeeCode, r.name, r.department, r.designation, r.workingDays, r.payableDays, r.lopDays, r.basic, r.hra, r.conveyance, r.specialAllowance, r.otherEarnings, r.gross, r.pf, r.esi, r.ptax, r.loan, r.otherDeductions, r.totalDeductions, r.netPay]);
+  const totals = headers.map((_, c) => {
+    if (c === 0) return 'Total';
+    if (c < 7) return null;
+    const col = columnLetter(c);
+    const value = roundMoney(body.reduce((sum, row) => sum + Number(row[c] || 0), 0));
+    return sorted.length ? { v: value, f: `SUM(${col}${firstData + 1}:${col}${lastData + 1})`, z: money } : 0;
+  });
+  const sheetRows = [
+    [`Salary statement · ${monthName(run.month)}`],
+    [`${tenant?.name || ''}${tenant?.name ? ' · ' : ''}${status} · ${sorted.length} ${sorted.length === 1 ? 'person' : 'people'}`],
+    [],
+    headers,
+    ...body,
+    totals
+  ];
+  const numberFormat = {};
+  for (let c = 7; c < headers.length; c += 1) numberFormat[c] = money;
+  const buffer = xlsxBook([{
+    name: 'Salary statement',
+    rows: sheetRows,
+    widths: [12, 26, 18, 20, 9, 9, 8, 11, 11, 11, 13, 12, 12, 10, 9, 9, 10, 12, 13, 12],
+    merges: ['A1:H1', 'A2:H2'],
+    filter: `A${headerRow + 1}:T${Math.max(lastData + 1, headerRow + 1)}`,
+    numberFormat,
+    formatFromRow: firstData
+  }]);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="salary-statement-${run.month}.xlsx"`);
+  res.send(buffer);
 });
 
 exports.salarySheetPdf = asyncHandler(async (req, res) => {

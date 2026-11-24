@@ -5,6 +5,7 @@ import Screen from '../components/Screen';
 import { TabTopBar } from '../components/TopBar';
 import T from '../components/T';
 import Sheet from '../components/Sheet';
+import PunchPlace from '../components/PunchPlace';
 import { Button, Card, IconButton, NoProfile, Notice, SkeletonCard } from '../components/ui';
 import { useAuth } from '../state/AuthContext';
 import { useApi } from '../hooks/useApi';
@@ -124,6 +125,13 @@ export default function AttendanceScreen({ navigation }) {
               <Fact label="Worked" value={open.workedMinutes ? formatMinutes(open.workedMinutes) : '—'} />
               <Fact label="Shift" value={open.shiftStart ? `${formatClock(open.shiftStart)} – ${formatClock(open.shiftEnd)}` : '—'} />
             </View>
+            {(open.punchLocations?.in || open.punchLocations?.out) && (
+              <View style={{ gap: 8 }}>
+                <T v="eyebrow">Where the punch was made</T>
+                <PunchPlace label="Check-in" place={open.punchLocations.in} />
+                <PunchPlace label="Check-out" place={open.punchLocations.out} />
+              </View>
+            )}
             {open.lateMinutes > 0 && <Notice>Late by {formatMinutes(open.lateMinutes)}.</Notice>}
             {open.earlyLeaveMinutes > 0 && <Notice>Left {formatMinutes(open.earlyLeaveMinutes)} early.</Notice>}
             {open.status === 'REVIEW'

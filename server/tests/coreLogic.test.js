@@ -141,10 +141,10 @@ function testJpkStatutoryAsGreytHR() {
   };
   const master = (basic, other) => ({ calculationMode: 'RULE_BASED_DEDUCTIONS', earnings: { basic, hra: 0, conveyance: 0, specialAllowance: other, otherEarnings: 0 }, grossSalary: basic + other, deductions: {} });
   const full = { workingDays: 26, payableDays: 26 };
-  // greytHR October 2026: OFCM0002 Basic 39,367, gross 74,010 -> PF 4,724, no ESI, P.Tax 170.
+  // A greytHR October 2026 payslip with Basic above 21,000: PF on the full Basic, no ESI, P.Tax 170.
   let slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(39367, 34643) });
   assert.deepEqual([slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax], [4724, 0, 170]);
-  // FAC0003 Basic 10,500, gross 15,599 -> PF 1,260, ESI 79, P.Tax 0.
+  // A greytHR payslip with Basic 10,500: PF 1,260, ESI 79, no P.Tax.
   slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(10500, 5099) });
   assert.deepEqual([slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax], [1260, 79, 0]);
   // Basic 22,000 agreed: no ESI even when loss of pay brings the earned Basic under 21,000.
@@ -154,15 +154,15 @@ function testJpkStatutoryAsGreytHR() {
   // Basic exactly 21,000: ESI applies.
   slip = calculateSalary({ employee: {}, attendanceStats: full, rule, salaryMaster: master(21000, 9000) });
   assert.equal(slip.deductions.esi, 158);
-  // greytHR's October 2026 payslips with LOP: the LOP comes off Special Allowance, then Conveyance.
+  // greytHR's own October 2026 payslips with LOP (names left out): the LOP comes off Special Allowance, then Conveyance.
   const parts = (basic, hra, conveyance, specialAllowance) => ({ calculationMode: 'RULE_BASED_DEDUCTIONS', earnings: { basic, hra, conveyance, specialAllowance, otherEarnings: 0 }, grossSalary: basic + hra + conveyance + specialAllowance, deductions: {} });
-  // OFC0022: 19,469, 3 LOP of 31 days -> Special 1,285, gross 17,585, PF 1,260, ESI 79, net 16,246.
+  // 3 LOP days of 31.
   slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 31, payableDays: 28 }, rule, salaryMaster: parts(10500, 4200, 1600, 3169) });
   assert.deepEqual([slip.lop.amount, slip.specialAllowance, slip.proratedGross, slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax, slip.netPay], [1884, 1285, 17585, 1260, 79, 0, 16246]);
-  // FAC0030: 17,469, 4 LOP of 31 -> Special 0, Conveyance 515, gross 15,215, net 13,876.
+  // 4 LOP days of 31: Special Allowance used up, then part of Conveyance.
   slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 31, payableDays: 27 }, rule, salaryMaster: parts(10500, 4200, 1600, 1169) });
   assert.deepEqual([slip.conveyance, slip.specialAllowance, slip.proratedGross, slip.netPay], [515, 0, 15215, 13876]);
-  // FAC0065 (wages): 29,213, 4.5 LOP of 27 -> Special 2,294, gross 24,344, PF 1,753, ESI 110, P.Tax 100, net 22,381.
+  // Wages staff: 4.5 LOP days of 27.
   slip = calculateSalary({ employee: {}, attendanceStats: { workingDays: 27, payableDays: 22.5 }, rule, salaryMaster: parts(14607, 5842.8, 1600, 7163.2) });
   assert.deepEqual([slip.specialAllowance, slip.proratedGross, slip.deductions.pf, slip.deductions.esi, slip.deductions.ptax, slip.netPay], [2294, 24344, 1753, 110, 100, 22381]);
   // The user's formula: IF(R<=20000,0,IF(R<=30000,100,IF(R<=50000,140,IF(R<=100000,170,208))))
@@ -260,7 +260,7 @@ async function testWagesHolidayIsPaid() {
     assert.deepEqual([salaried.workingDays, salaried.payableDays, salaried.attendanceLopDays, salaried.scheduledWorkingDays, salaried.dayBasis], [31, 31, 0, 23, 'CALENDAR_DAYS']);
     const byWorking = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED' }, '2026-10', 't1', { lopDayBasis: 'WORKING_DAYS' });
     assert.deepEqual([byWorking.workingDays, byWorking.payableDays, byWorking.dayBasis], [23, 23, 'WORKING_DAYS']);
-    // Joined on 5 Oct: paid on the 27 days from joining (greytHR FAC0098).
+    // Joined on 5 Oct: paid on the 27 days from joining, as greytHR does.
     const joiner = await attendanceStatsFor({ ...base, employeeCategory: 'SALARIED', dateOfJoining: new Date(2026, 9, 5) }, '2026-10', 't1');
     assert.deepEqual([joiner.workingDays, joiner.payableDays], [27, 27]);
     // A non-holiday day with no attendance is still LOP.

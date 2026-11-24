@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Search, UsersRound } from '../components/ico
 import Screen from '../components/Screen';
 import { PageTopBar } from '../components/TopBar';
 import T from '../components/T';
+import PunchPlace from '../components/PunchPlace';
 import { Avatar, Card, Empty, IconButton, Notice, SkeletonCard } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { colors, font, radius, shadow } from '../theme';
@@ -109,6 +110,12 @@ export default function TeamTodayScreen() {
                   <T v="strong" numberOfLines={1}>{r.name}</T>
                   <T v="small" numberOfLines={1}>{detail(r)}</T>
                   <T v="small" color={colors.faint} numberOfLines={1}>{[r.employeeCode, r.department || r.designation].filter(Boolean).join(' · ')}</T>
+                  {(r.checkInLocation || r.checkOutLocation) && (
+                    <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                      <PunchPlace compact label="In location" place={r.checkInLocation} />
+                      <PunchPlace compact label="Out location" place={r.checkOutLocation} />
+                    </View>
+                  )}
                 </View>
                 <View style={{ alignItems: 'flex-end', gap: 4 }}>
                   <T v="small" weight="semibold" color={['MISSING', 'ABSENT'].includes(r.state) ? colors.orange : colors.navy}>{meta.label}</T>

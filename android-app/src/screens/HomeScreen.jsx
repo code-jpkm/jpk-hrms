@@ -19,7 +19,8 @@ import { canAccessPath, canApprove } from '../utils/permissions';
 async function currentPlace() {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') throw new Error('Allow location to check in from the phone. It is used only at check-in and check-out.');
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+  // The most exact fix the phone can give: HR sees this point on Google Maps.
+  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
   let address = '';
   if (Platform.OS !== 'web') {
     try {

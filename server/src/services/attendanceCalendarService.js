@@ -17,6 +17,7 @@ const { startOfDay, endOfDay, monthRange, eachDate, dateKey, holidayDateKey, hol
 const { computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace } = require('../utils/shift');
 const { evaluateMonth, getPolicy } = require('./attendanceRulesService');
 const { isStillOpenForCheckout } = require('./attendanceAutoCloseService');
+const { punchLocations } = require('../utils/punchLocation');
 
 const IST_FALLBACK = 330;
 const PUNCH_SOURCES = ['BIOMETRIC', 'MOBILE_GEOFENCE', 'ANYWHERE'];
@@ -171,6 +172,8 @@ async function buildCalendar({ tenantId, employeeId, month: requestedMonth, self
       deductionReason: record?.deductionReason || '',
       source: record?.source || '',
       siteName: record?.location?.siteName || record?.meta?.mobile?.checkInLocation?.siteName || '',
+      // Exact phone location of the check-in and check-out (null for machine punches).
+      punchLocations: punchLocations(record),
       missingPunch,
       autoClosed: Boolean(record?.autoClosed),
       leaveType: approvedLeave ? (approvedLeave.requestType === 'WFH' ? 'WFH' : approvedLeave.leaveType) : '',

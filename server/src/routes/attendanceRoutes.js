@@ -1,12 +1,16 @@
 const router = require('express').Router();
 const { auth, requireAbility } = require('../middleware/auth');
 const controller = require('../controllers/attendanceController');
+const reports = require('../controllers/attendanceReportController');
 
 router.use(auth);
 router.get('/', controller.listAttendance);
 router.get('/employees', controller.employees);
 router.get('/calendar', controller.calendar);
 router.get('/team-today', controller.teamToday);
+// Month report and "left before the shift ended" report: JSON, Excel (format=xlsx) or PDF (format=pdf).
+router.get('/reports/monthly', reports.monthly);
+router.get('/reports/early-leave', reports.earlyLeave);
 router.get('/mobile-state', controller.mobileState);
 router.post('/mobile-check-in', controller.mobileCheckIn);
 router.post('/mobile-check-out', controller.mobileCheckOut);

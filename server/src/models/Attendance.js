@@ -12,6 +12,8 @@ const attendanceSchema = new mongoose.Schema({
   location: {
     lat: Number,
     lng: Number,
+    // How close the phone said the point is, in metres (GPS accuracy).
+    accuracy: Number,
     siteName: String,
     distanceMeters: Number,
     address: String

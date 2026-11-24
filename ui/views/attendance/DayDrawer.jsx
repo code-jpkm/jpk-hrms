@@ -6,6 +6,7 @@ import { useApi } from '../../hooks/useApi.js';
 import { DateTimeField, addDaysToKey } from '../../components/DateTimePicker.jsx';
 import { formatDayKey, formatTime, formatPunch, durationLabel, parseHHMM, istMinutes, toIstInputValue, clockLabel, monthLabel } from '../../utils/time.js';
 import { statusMeta, LEAVE_NAMES } from './meta.js';
+import PunchPlaces from './PunchPlace.jsx';
 
 function ShiftTimeline({ day }) {
   const data = useMemo(() => {
@@ -334,6 +335,7 @@ export default function DayDrawer({ day, employee, isSelf, perms = {}, payrollSt
               <h4>Shift vs actual</h4>
               <ShiftTimeline day={day} />
             </div>
+            <PunchPlaces places={day.punchLocations} />
             <div className="att-box">
               <h4>How this day was calculated</h4>
               {reasons.length ? (

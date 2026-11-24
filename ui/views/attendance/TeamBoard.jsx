@@ -4,6 +4,7 @@ import { useApi } from '../../hooks/useApi.js';
 import { post } from '../../api/client.js';
 import { formatPunch, durationLabel, formatDayKey, todayKey, initialsOf } from '../../utils/time.js';
 import { TEAM_STATES, LEAVE_NAMES, downloadCsv } from './meta.js';
+import { PunchPlace } from './PunchPlace.jsx';
 
 const FILTERS = [
   ['ALL', 'Everyone', '#1F3445', (s) => s.total],
@@ -57,8 +58,8 @@ export default function TeamBoard({ location, canMessage, onOpenPerson }) {
   }
 
   function exportCsv() {
-    downloadCsv(`team-attendance-${date}.csv`, ['Code', 'Name', 'Department', 'Location', 'Status', 'Check in', 'Check out', 'Late (min)', 'Worked', 'Shift'],
-      visible.map((r) => [r.employeeCode, r.name, r.department, r.workLocation, TEAM_STATES[r.state]?.label || r.state, r.checkIn ? formatPunch(r.checkIn) : '', r.checkOut ? formatPunch(r.checkOut) : '', r.lateMinutes || '', r.workedMinutes ? durationLabel(r.workedMinutes) : '', r.shiftName]));
+    downloadCsv(`team-attendance-${date}.csv`, ['Code', 'Name', 'Department', 'Location', 'Status', 'Check in', 'Check out', 'Late (min)', 'Worked', 'Shift', 'Check-in place', 'Check-out place'],
+      visible.map((r) => [r.employeeCode, r.name, r.department, r.workLocation, TEAM_STATES[r.state]?.label || r.state, r.checkIn ? formatPunch(r.checkIn) : '', r.checkOut ? formatPunch(r.checkOut) : '', r.lateMinutes || '', r.workedMinutes ? durationLabel(r.workedMinutes) : '', r.shiftName, r.checkInLocation ? r.checkInLocation.mapUrl : '', r.checkOutLocation ? r.checkOutLocation.mapUrl : '']));
   }
 
   return (
@@ -104,6 +105,12 @@ export default function TeamBoard({ location, canMessage, onOpenPerson }) {
                   <div><span>Out</span><b>{r.checkOut ? formatPunch(r.checkOut) : r.state === 'IN' ? 'On duty' : '—'}</b></div>
                   <div><span>Worked</span><b>{r.workedMinutes ? durationLabel(r.workedMinutes, { short: true }) : '—'}</b></div>
                 </div>
+                {(r.checkInLocation || r.checkOutLocation) && (
+                  <div className="att-person-places">
+                    <PunchPlace compact label="In location" place={r.checkInLocation} />
+                    <PunchPlace compact label="Out location" place={r.checkOutLocation} />
+                  </div>
+                )}
                 <div className="att-person-foot">
                   <span>{r.lateMinutes ? <b style={{ color: '#B85C10' }}>{r.lateMinutes} min late</b> : r.shiftStart ? `Shift ${r.shiftStart}–${r.shiftEnd}` : r.shiftName || 'No shift'}</span>
                   <button type="button" className="att-link" onClick={() => onOpenPerson(r.employeeId)}>Open calendar →</button>
