@@ -15,6 +15,7 @@ const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, hol
 const { calculateSalary, calculateStatutoryDeductions, roundMoney } = require('../utils/salary');
 const { readWorkbookRows, workbookBuffer } = require('../utils/excel');
 const { workbookBuffer: xlsxBook, columnLetter } = require('../utils/xlsxWriter');
+const { payslipFileName, attachmentHeader } = require('../utils/payslipName');
 const Tenant = require('../models/Tenant');
 const { getActiveSalaryMastersMap } = require('../services/salaryMasterService');
 const { buildSlip, recalculateRunSummary } = require('../services/payrollSlipService');
@@ -659,7 +660,7 @@ exports.slipPdf = asyncHandler(async (req, res) => {
   // v26: the slip list hid drafts from employees, but the PDF link still served them.
   if (!isPayrollAdmin(req.user) && slip.payrollRunId?.status !== 'FINALIZED') throw new ApiError(404, 'Salary slip not found');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="salary-slip-${slip.employeeId.employeeCode}-${slip.month}.pdf"`);
+  res.setHeader('Content-Disposition', attachmentHeader(payslipFileName(slip.employeeId, slip.month)));
   await writePayslipPdfToStream({ tenantId: req.tenantId, slip, stream: res });
 });
 
@@ -668,7 +669,7 @@ exports.publicSlipPdf = asyncHandler(async (req, res) => {
   if (!slip || !req.query.token || !slip.shareTokenHash || slip.shareTokenExpiresAt < new Date()) throw new ApiError(404, 'Salary slip link expired or invalid');
   if (hashToken(req.query.token) !== slip.shareTokenHash) throw new ApiError(404, 'Salary slip link expired or invalid');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="salary-slip-${slip.employeeId.employeeCode}-${slip.month}.pdf"`);
+  res.setHeader('Content-Disposition', attachmentHeader(payslipFileName(slip.employeeId, slip.month)));
   await writePayslipPdfToStream({ tenantId: slip.tenantId, slip, stream: res });
 });
 
@@ -853,7 +854,7 @@ exports.shareSlips = asyncHandler(async (req, res) => {
       actorUserId: req.user._id,
       channels: { email: channels.email !== false, whatsapp: channels.whatsapp !== false },
       data: { month: slip.month, employeeCode: employee.employeeCode, slipLink: link, attached: channels.email !== false, employeeName: name, note: message || '' },
-      attachments: [{ filename: `salary-slip-${employee.employeeCode}-${slip.month}.pdf`, contentType: 'application/pdf', contentBase64: pdf.toString('base64'), url: link }],
+      attachments: [{ filename: payslipFileName(employee, slip.month), contentType: 'application/pdf', contentBase64: pdf.toString('base64'), url: link }],
       inApp: { type: 'PAYSLIP_READY', title: `Salary slip ready · ${slip.month}`, body: `Your salary slip for ${slip.month} is ready. Open Payroll to view the details.`, link: '/payroll', entityType: 'SALARY_SLIP' }
     });
     results.push({ slipId: slip._id, employeeCode: employee.employeeCode, link, logs });

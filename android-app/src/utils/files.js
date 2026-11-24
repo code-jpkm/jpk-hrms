@@ -5,7 +5,7 @@ import { getToken } from '../api/client';
 import { apiBase } from '../config';
 
 function safeName(name) {
-  return String(name || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 80) || 'file';
+  return String(name || 'file').replace(/[^\w.\- ]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'file';
 }
 
 /**
@@ -22,7 +22,11 @@ export async function downloadAndOpen(path, { fileName = 'file', mimeType = 'app
     window.open(URL.createObjectURL(blob), '_blank');
     return;
   }
-  const target = `${FileSystem.cacheDirectory}${Date.now()}-${safeName(fileName)}`;
+  // Each download gets its own folder, so the file keeps its real name
+  // ("Sayantan Mondal Payslip October 2026.pdf") when it is shared or saved.
+  const folder = `${FileSystem.cacheDirectory}downloads/${Date.now()}/`;
+  const target = `${folder}${encodeURIComponent(safeName(fileName))}`;
+  await FileSystem.makeDirectoryAsync(folder, { intermediates: true });
   let res;
   try {
     res = await FileSystem.downloadAsync(url, target, { headers });

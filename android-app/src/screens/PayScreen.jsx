@@ -8,6 +8,7 @@ import { Button, Card, Empty, Notice, SkeletonCard } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useAuth } from '../state/AuthContext';
 import { downloadAndOpen } from '../utils/files';
+import { payslipFileName } from '../utils/payslipName';
 import { colors } from '../theme';
 import { money, monthLabel } from '../utils/time';
 
@@ -26,8 +27,11 @@ function deductionsTotal(d) {
   return num(d.total) ?? sumExcept(d, ['total']);
 }
 
-function openPdf(slip) {
-  return downloadAndOpen(`/payroll/slips/${slip._id}/pdf`, { fileName: `payslip-${slip.month}.pdf`, mimeType: 'application/pdf', title: `Payslip ${monthLabel(slip.month)}` });
+function openPdf(slip, employee) {
+  // "Sayantan Mondal Payslip October 2026.pdf", the same name the website gives.
+  const who = slip.employeeId && typeof slip.employeeId === 'object' ? slip.employeeId : employee;
+  const fileName = payslipFileName(who, slip.month);
+  return downloadAndOpen(`/payroll/slips/${slip._id}/pdf`, { fileName, mimeType: 'application/pdf', title: fileName.replace(/\.pdf$/, '') });
 }
 
 export default function PayScreen() {
@@ -44,7 +48,7 @@ export default function PayScreen() {
   async function download(slip) {
     setBusy(slip._id);
     setError('');
-    try { await openPdf(slip); } catch (err) { setError(err.message); } finally { setBusy(null); }
+    try { await openPdf(slip, employee); } catch (err) { setError(err.message); } finally { setBusy(null); }
   }
 
   return (

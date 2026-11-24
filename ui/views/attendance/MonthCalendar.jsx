@@ -1,4 +1,5 @@
 import React from 'react';
+import Icon from '../../components/Icon.jsx';
 import { formatPunch, durationLabel } from '../../utils/time.js';
 import { statusMeta, WEEKDAYS, isIssue, LEAVE_NAMES } from './meta.js';
 
@@ -66,7 +67,7 @@ function DayCell({ day, onOpen }) {
   );
 }
 
-export default function MonthCalendar({ days = [], loading, onOpen, showWfh }) {
+export default function MonthCalendar({ days = [], loading, loadingLabel = 'Loading…', onOpen, showWfh }) {
   const blanks = days.length ? days[0].weekday : 0;
   const legend = [
     ['PRESENT', 'Present'], ['ABSENT', 'Absent'], ['HALF_DAY', 'Half day'], ['REVIEW', 'Out time missing (no LOP yet)'], ['LEAVE', 'Leave'],
@@ -78,8 +79,9 @@ export default function MonthCalendar({ days = [], loading, onOpen, showWfh }) {
         {legend.map(([key, label]) => <span key={key}><b className={`att-code c-${statusMeta(key).tone}`}>{statusMeta(key).short}</b>{label}</span>)}
         <span><b className="att-legend-note">Late</b>Orange note = needs attention</span>
       </div>
-      <div className="att-cal">
-        <div className="att-cal-grid" role="grid" aria-label="Attendance calendar">
+      <div className={`att-cal${loading && !days.length ? ' is-loading' : ''}`} aria-busy={Boolean(loading && !days.length)}>
+        {loading && !days.length && <div className="att-cal-loading" role="status"><span><Icon name="Loader2" size={16} className="att-spin" /> {loadingLabel}</span></div>}
+        <div className={`att-cal-grid${days.length ? ' is-fresh' : ''}`} role="grid" aria-label="Attendance calendar">
           {WEEKDAYS.map((d) => <div key={d} className="att-cal-head" role="columnheader">{d}</div>)}
           {loading && !days.length
             ? Array.from({ length: 35 }).map((_, i) => <div key={i} className="att-skeleton" />)

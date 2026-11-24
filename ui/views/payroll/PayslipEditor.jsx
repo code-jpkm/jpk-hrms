@@ -4,6 +4,7 @@ import { api, put, remove } from '../../api/client.js';
 import { amountText, rupees, rupeesInWords, round2, whenText } from './payslipText.js';
 import '../../styles/attendance.css';
 import '../../styles/payslip.css';
+import { payslipFileName } from '../../utils/payslipName.js';
 
 /**
  * Edit one payslip directly, laid out like the printed slip: change any
@@ -132,7 +133,7 @@ export default function PayslipEditor({ slipId, canEdit = true, onClose, onSaved
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `payslip-${data?.employee?.employeeCode || 'employee'}-${data?.month || ''}.pdf`;
+      a.download = payslipFileName(data?.employee, data?.month);
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) { setError(err.message); }

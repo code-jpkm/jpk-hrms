@@ -15,6 +15,7 @@ import { api, post, remove } from '../api/client.js';
 import { useApi } from '../hooks/useApi.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { hasAbility } from '../utils/permissions.js';
+import { payslipFileName } from '../utils/payslipName.js';
 
 const defaultTemplate = {
   name: 'JPK payslip',
@@ -209,17 +210,18 @@ export default function Payroll() {
     } catch (err) { setError(err); }
   }
 
-  async function downloadPdf(id) {
+  async function downloadPdf(slip) {
     setError(null);
     try {
-      const blob = await api(`/payroll/slips/${id}/pdf`);
+      const blob = await api(`/payroll/slips/${slip._id}/pdf`);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
+      const fileName = payslipFileName(slip.employeeId, slip.month || month);
       a.href = url;
-      a.download = `salary-slip-${month}.pdf`;
+      a.download = fileName;
       a.click();
       setTimeout(()=>URL.revokeObjectURL(url), 1000);
-      toast.success('Salary slip PDF download started');
+      toast.success(`${fileName} downloaded`);
     } catch (err) {
       setError(err);
       toast.error(err.message || 'Could not download salary slip');
@@ -331,7 +333,7 @@ export default function Payroll() {
       {canUpdateTemplate && <details className="premium-collapsible"><summary><div><small>PAYSLIP DESIGN</small><b>Payslip PDF</b><span>Company heading, footer line and what the payslip shows.</span></div><em>Open</em></summary><div className="collapsible-body"><div className="form-grid"><Field label="Template name"><input value={template.name || ''} onChange={(e) => setTemplateValue('name', e.target.value)} /></Field><Field label="Company name" hint="Empty: the company name from Settings."><input value={template.companyName || ''} onChange={(e) => setTemplateValue('companyName', e.target.value)} /></Field><Field label="Company address" hint="Printed under the company name. Empty: the office address."><textarea value={template.companyAddress || ''} onChange={(e) => setTemplateValue('companyAddress', e.target.value)} /></Field><Field label="Footer line"><textarea value={template.footerText || ''} onChange={(e) => setTemplateValue('footerText', e.target.value)} /></Field><Field label="Bank account number"><select value={template.bankAccountDisplay || 'FULL'} onChange={(e) => setTemplateValue('bankAccountDisplay', e.target.value)}><option value="FULL">Full number</option><option value="LAST4">Only the last 4 digits</option><option value="HIDE">Do not show</option></select></Field><label className="switch-row compact-switch"><input type="checkbox" checked={template.showPfEsiNumbers !== false} onChange={(e) => setTemplateValue('showPfEsiNumbers', e.target.checked)} /><span><b>Show PF No. and UAN</b></span></label><label className="switch-row compact-switch"><input type="checkbox" checked={template.showAttendanceSummary !== false} onChange={(e) => setTemplateValue('showAttendanceSummary', e.target.checked)} /><span><b>Show work days and LOP</b></span></label></div><button className="primary" onClick={saveTemplate}>Save PDF format</button></div></details>}
 
       <section className="premium-section-card salary-slip-section"><div className="premium-section-head"><div><small>{monthLabel(month)}</small><h2>{canReadPayrollAdmin ? 'Salary slips' : 'My salary slips'}</h2><p>{canReadPayrollAdmin ? `Salary figures stay hidden until you click the eye icon.${canAdjustPayslips ? ' Edit opens the payslip to change any amount or add a line or a note.' : ''}` : 'Click the eye icon to see the amount, or download the PDF.'}</p></div><span>{monthSlips.length} slips</span></div>
-        {!slips?.slips?.length ? <Empty /> : <div className="private-slip-list">{slips.slips.map((s)=>{const open=revealedSlips.includes(s._id);return <article key={s._id} className={open?'revealed':''}><div className="private-slip-row ps-slip-row"><div className="salary-person"><span className="employee-mini-avatar">{`${s.employeeId?.firstName?.[0]||''}${s.employeeId?.lastName?.[0]||''}`}</span><div><b>{s.employeeId?.firstName} {s.employeeId?.lastName||''}</b><small>{s.employeeId?.employeeCode} · {s.month} · payable {s.attendanceStats?.payableDays??0}/{s.attendanceStats?.workingDays??0} days</small></div></div><div className="ps-slip-right">{canReadPayrollAdmin&&slipState(s)}<span className={`lop-chip ${Number(s.attendanceStats?.attendanceLopDays||0)>0?'danger':''}`}>{s.attendanceStats?.attendanceLopDays||0} LOP</span><button className="salary-eye" onClick={()=>toggleRevealSlip(s._id)}>{open?'◉ Hide':'◌ View salary'}</button>{canAdjustPayslips&&<button className="salary-eye ps-edit-btn" onClick={()=>setEditingSlip(s._id)} aria-label={`Edit the payslip of ${s.employeeId?.firstName||'this employee'}`}><Icon name="Pencil" size={13}/> Edit</button>}</div></div>{open&&<div className="slip-reveal-panel"><div className="salary-reveal-panel"><div><span>Basic</span><b>{money(s.earnings?.basic)}</b></div><div><span>HRA</span><b>{money(s.earnings?.hra)}</b></div><div><span>Conveyance</span><b>{money(s.earnings?.conveyance)}</b></div><div><span>Special</span><b>{money(s.earnings?.specialAllowance)}</b></div><div><span>Total earnings</span><b>{money(s.earnings?.total ?? s.earnings?.proratedGross)}</b></div><div><span>Deductions</span><b>{money(s.deductions?.total)}</b></div><div className="accent"><span>Net pay</span><b>{money(s.netPay)}</b></div></div><div className="slip-actions"><button onClick={()=>downloadPdf(s._id)}>Download PDF</button><ExplainSlip slipId={s._id}/></div></div>}</article>})}</div>}
+        {!slips?.slips?.length ? <Empty /> : <div className="private-slip-list">{slips.slips.map((s)=>{const open=revealedSlips.includes(s._id);return <article key={s._id} className={open?'revealed':''}><div className="private-slip-row ps-slip-row"><div className="salary-person"><span className="employee-mini-avatar">{`${s.employeeId?.firstName?.[0]||''}${s.employeeId?.lastName?.[0]||''}`}</span><div><b>{s.employeeId?.firstName} {s.employeeId?.lastName||''}</b><small>{s.employeeId?.employeeCode} · {s.month} · payable {s.attendanceStats?.payableDays??0}/{s.attendanceStats?.workingDays??0} days</small></div></div><div className="ps-slip-right">{canReadPayrollAdmin&&slipState(s)}<span className={`lop-chip ${Number(s.attendanceStats?.attendanceLopDays||0)>0?'danger':''}`}>{s.attendanceStats?.attendanceLopDays||0} LOP</span><button className="salary-eye" onClick={()=>toggleRevealSlip(s._id)}>{open?'◉ Hide':'◌ View salary'}</button>{canAdjustPayslips&&<button className="salary-eye ps-edit-btn" onClick={()=>setEditingSlip(s._id)} aria-label={`Edit the payslip of ${s.employeeId?.firstName||'this employee'}`}><Icon name="Pencil" size={13}/> Edit</button>}</div></div>{open&&<div className="slip-reveal-panel"><div className="salary-reveal-panel"><div><span>Basic</span><b>{money(s.earnings?.basic)}</b></div><div><span>HRA</span><b>{money(s.earnings?.hra)}</b></div><div><span>Conveyance</span><b>{money(s.earnings?.conveyance)}</b></div><div><span>Special</span><b>{money(s.earnings?.specialAllowance)}</b></div><div><span>Total earnings</span><b>{money(s.earnings?.total ?? s.earnings?.proratedGross)}</b></div><div><span>Deductions</span><b>{money(s.deductions?.total)}</b></div><div className="accent"><span>Net pay</span><b>{money(s.netPay)}</b></div></div><div className="slip-actions"><button onClick={()=>downloadPdf(s)}>Download PDF</button><ExplainSlip slipId={s._id}/></div></div>}</article>})}</div>}
       </section>
 
       {sendOpen && <SendPayslips month={month} slips={monthSlips} onClose={() => setSendOpen(false)} onSent={() => reloadSlips()} />}

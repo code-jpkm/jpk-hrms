@@ -16,7 +16,9 @@ import Insights from './attendance/Insights.jsx';
 import Reports from './attendance/Reports.jsx';
 import { statusMeta, downloadCsv } from './attendance/meta.js';
 
-function EmployeePicker({ employees, value, onChange, selfId }) {
+const isSameId = (a, b) => Boolean(a && b) && String(a) === String(b);
+
+function EmployeePicker({ employees, value, onChange, selfId, loading = false }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef(null);
@@ -30,10 +32,10 @@ function EmployeePicker({ employees, value, onChange, selfId }) {
   const name = (e) => `${e.firstName} ${e.lastName || ''}`.trim();
   return (
     <div className="att-picker" ref={ref}>
-      <button type="button" className="att-picker-btn" onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}>
+      <button type="button" className={`att-picker-btn${loading ? ' is-loading' : ''}`} onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open} aria-busy={loading}>
         <span className="att-avatar">{initialsOf(current ? name(current) : '?')}</span>
-        <div><b>{current ? name(current) : 'Choose a person'}{current?._id === selfId ? ' (you)' : ''}</b><small>{current ? `${current.employeeCode} · ${current.department || current.workLocation || ''}` : `${employees.length} people`}</small></div>
-        <Icon name="ChevronDown" size={16} />
+        <div><b>{current ? name(current) : 'Choose a person'}{current?._id === selfId ? ' (you)' : ''}</b><small>{loading ? 'Loading…' : current ? `${current.employeeCode} · ${current.department || current.workLocation || ''}` : `${employees.length} people`}</small></div>
+        {loading ? <Icon name="Loader2" size={16} className="att-spin" /> : <Icon name="ChevronDown" size={16} />}
       </button>
       {open && (
         <div className="att-picker-menu" role="listbox">
@@ -53,7 +55,35 @@ function EmployeePicker({ employees, value, onChange, selfId }) {
   );
 }
 
-function Kpis({ summary }) {
+/**
+ * Says whose month is on screen. While another person or month is loading it
+ * says so (and the numbers below are hidden), so the old person's numbers are
+ * never read as the new person's.
+ */
+function ViewingBar({ person, month, state, loadedAt, isSelf }) {
+  const name = person ? (`${person.firstName || ''} ${person.lastName || ''}`.trim() || person.employeeCode || 'this person') : 'this person';
+  const sub = [person?.employeeCode, person?.department || person?.workLocation].filter(Boolean).join(' · ');
+  const whose = isSelf ? 'your' : `${person?.firstName || name}'s`;
+  return (
+    <div className={`att-viewing ${state}`} role="status" aria-live="polite" aria-busy={state === 'loading' || state === 'refreshing'}>
+      <span className="att-avatar">{initialsOf(name)}</span>
+      <div className="att-viewing-who">
+        <b>{name}{isSelf ? ' (you)' : ''}</b>
+        <small>{sub ? `${sub} · ` : ''}{monthLabel(month)}</small>
+      </div>
+      <div className="att-viewing-state">
+        {state === 'loading' && <><Icon name="Loader2" size={15} className="att-spin" /> Loading {whose} {monthLabel(month)}…</>}
+        {state === 'refreshing' && <><Icon name="Loader2" size={15} className="att-spin" /> Updating…</>}
+        {state === 'ready' && <><Icon name="CircleCheck" size={15} /> Showing {monthLabel(month)}{loadedAt ? ` · loaded at ${formatPunch(loadedAt)}` : ''}</>}
+        {state === 'error' && <><Icon name="TriangleAlert" size={15} /> Could not load this month</>}
+      </div>
+      {state === 'loading' && <i className="att-viewing-bar" aria-hidden="true" />}
+    </div>
+  );
+}
+
+function Kpis({ summary, failed = false }) {
+  if (!summary && failed) return null;
   if (!summary) return <div className="att-kpis">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="att-skeleton" style={{ minHeight: 104 }} />)}</div>;
   const items = [
     ['present', 'UserRoundCheck', summary.present, 'Present days', summary.needsReview ? `${summary.needsReview} out time missing · needs a decision` : `${summary.wfh ? `${summary.wfh} WFH · ` : ''}${summary.halfDays} half day${summary.halfDays === 1 ? '' : 's'}`],
@@ -124,11 +154,18 @@ export default function Attendance() {
 
   const calendarPath = calendarEmployeeId ? `/attendance/calendar?month=${month}&employeeId=${calendarEmployeeId}` : '';
   const { data: calendar, error: calendarError, loading: calendarLoading, reload: reloadCalendar } = useApi(calendarPath, [calendarPath], { skeleton: false });
+  // Only the month that was picked is shown. While another person or month is
+  // on its way, the previous one is hidden and the page says it is loading.
+  const wantedKey = calendarEmployeeId ? `${calendarEmployeeId}|${month}` : '';
+  const shown = calendar && wantedKey && `${calendar.employee?._id || ''}|${calendar.month || ''}` === wantedKey ? calendar : null;
+  const viewState = !wantedKey ? 'idle' : calendarError && !calendarLoading ? 'error' : !shown ? 'loading' : calendarLoading ? 'refreshing' : 'ready';
+  const [loadedAt, setLoadedAt] = useState(null);
+  useEffect(() => { if (shown && !calendarLoading) setLoadedAt(new Date()); }, [shown, calendarLoading]);
   const { data: mobileState, error: mobileError, reload: reloadMobile } = useApi(employee?._id ? '/attendance/mobile-state' : '', [employee?._id], { skeleton: false });
   const viewingSelfNow = calendarEmployeeId === employee?._id && month === currentMonthKey();
   const selfPath = employee?._id && !viewingSelfNow ? `/attendance/calendar?month=${currentMonthKey()}&employeeId=${employee._id}` : '';
   const { data: selfCalendar } = useApi(selfPath, [selfPath], { skeleton: false });
-  const selfSummary = viewingSelfNow ? calendar?.summary : selfCalendar?.summary;
+  const selfSummary = viewingSelfNow ? shown?.summary : selfCalendar?.summary;
 
   // Keep the punch card fresh while the tab is open.
   useEffect(() => {
@@ -137,9 +174,10 @@ export default function Attendance() {
     return () => clearInterval(t);
   }, [employee?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const viewed = calendar?.employee || employees.find((e) => e._id === calendarEmployeeId);
+  const viewed = shown?.employee || employees.find((e) => e._id === calendarEmployeeId) || (isSameId(calendarEmployeeId, employee?._id) ? employee : null);
   const isSelf = calendarEmployeeId && employee?._id && String(calendarEmployeeId) === String(employee._id);
-  const issues = (calendar?.days || []).filter((d) => ['ABSENT', 'HALF_DAY', 'REVIEW'].includes(d.status) || d.missingPunch || d.lopDays > 0).filter((d) => !d.isFuture).length;
+  const whoseMonth = isSelf ? 'your' : viewed?.firstName ? `${viewed.firstName}'s` : 'their';
+  const issues = (shown?.days || []).filter((d) => ['ABSENT', 'HALF_DAY', 'REVIEW'].includes(d.status) || d.missingPunch || d.lopDays > 0).filter((d) => !d.isFuture).length;
 
   async function punch(mode) {
     setPunching(true); setNotice(null);
@@ -163,7 +201,7 @@ export default function Attendance() {
       setNotice({ tone: 'info', text: 'Pick the day you want to correct in your calendar below.' });
       return;
     }
-    const day = (calendar?.days || []).find((d) => d.isToday) || (calendar?.days || []).filter((d) => !d.isFuture).slice(-1)[0];
+    const day = (shown?.days || []).find((d) => d.isToday) || (shown?.days || []).filter((d) => !d.isFuture).slice(-1)[0];
     if (day) setSelectedDay(day);
   }
 
@@ -176,7 +214,7 @@ export default function Attendance() {
   }
 
   function exportMonth() {
-    const days = calendar?.days || [];
+    const days = shown?.days || [];
     downloadCsv(`attendance-${viewed?.employeeCode || 'employee'}-${month}.csv`, ['Date', 'Day', 'Status', 'Check in', 'Check out', 'Worked', 'Late (min)', 'Early (min)', 'LOP', 'Shift', 'Remarks'],
       days.filter((d) => !d.isFuture).map((d) => [d.date, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.weekday], statusMeta(d.status).label, d.checkIn ? formatPunch(d.checkIn) : '', d.checkOut ? formatPunch(d.checkOut) : '', d.workedMinutes ? durationLabel(d.workedMinutes) : '', d.lateMinutes || '', d.earlyLeaveMinutes || '', d.lopDays || '', d.shiftName, d.holidayName || d.deductionReason || '']));
   }
@@ -193,7 +231,9 @@ export default function Attendance() {
 
       {notice && <div className={`att-alert ${notice.tone === 'good' ? 'good' : notice.tone === 'info' ? 'info' : ''}`} role="status"><Icon name={notice.tone === 'good' ? 'CircleCheck' : notice.tone === 'info' ? 'Info' : 'TriangleAlert'} size={16} /><div>{notice.text}</div></div>}
 
-      <Kpis summary={calendar?.summary} />
+      {wantedKey && <ViewingBar key={`${wantedKey}-${viewState === 'ready' ? 'ready' : 'wait'}`} person={viewed} month={month} state={viewState} loadedAt={loadedAt} isSelf={Boolean(isSelf)} />}
+
+      <Kpis summary={shown?.summary} failed={viewState === 'error'} />
 
       <section className="att-panel">
         <div className="att-panel-head">
@@ -206,14 +246,14 @@ export default function Attendance() {
           <div className="att-toolbar">
             {canSeeOthers && <div className="att-seg">{['ALL', 'OFFICE', 'FACTORY'].map((p) => <button type="button" key={p} className={place === p ? 'active' : ''} onClick={() => setPlace(p)}>{p === 'ALL' ? 'All' : p === 'OFFICE' ? 'Office' : 'Factory'}</button>)}</div>}
             {tab !== 'team' && <>
-              {canSeeOthers && tab !== 'reports' && <EmployeePicker employees={scoped} value={calendarEmployeeId} onChange={(id) => { setCalendarEmployeeId(id); setSelectedDay(null); }} selfId={employee?._id} />}
+              {canSeeOthers && tab !== 'reports' && <EmployeePicker employees={scoped} value={calendarEmployeeId} onChange={(id) => { setCalendarEmployeeId(id); setSelectedDay(null); }} selfId={employee?._id} loading={viewState === 'loading'} />}
               <div className="att-month-nav">
                 <button type="button" onClick={() => setMonth((m) => shiftMonth(m, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
-                <strong>{monthLabel(month)}</strong>
+                <strong aria-busy={viewState === 'loading' && tab !== 'reports'}>{monthLabel(month)}{viewState === 'loading' && tab !== 'reports' && <Icon name="Loader2" size={13} className="att-spin" />}</strong>
                 <button type="button" onClick={() => setMonth((m) => shiftMonth(m, 1))} disabled={month >= currentMonthKey()} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
               </div>
               {month !== currentMonthKey() && <button type="button" className="att-today-btn" onClick={() => setMonth(currentMonthKey())}>This month</button>}
-              {tab !== 'reports' && <button type="button" className="att-icon-btn" onClick={exportMonth} disabled={!calendar?.days?.length}><Icon name="Download" size={14} /> CSV</button>}
+              {tab !== 'reports' && <button type="button" className="att-icon-btn" onClick={exportMonth} disabled={!shown?.days?.length}><Icon name="Download" size={14} /> CSV</button>}
               {canEvaluate && <button type="button" className="att-icon-btn" onClick={recalculate} title="Re-apply attendance rules to every day of this month"><Icon name="RefreshCw" size={14} /> Recalculate</button>}
             </>}
           </div>
@@ -221,9 +261,9 @@ export default function Attendance() {
 
         {calendarError && tab !== 'team' && tab !== 'reports' && <div className="att-alert" style={{ margin: 16 }}><Icon name="TriangleAlert" size={16} /><div>{calendarError.message}</div></div>}
 
-        {tab === 'calendar' && <MonthCalendar days={calendar?.days || []} loading={calendarLoading} onOpen={setSelectedDay} showWfh={showWfh} />}
+        {tab === 'calendar' && <MonthCalendar key={shown ? wantedKey : 'loading'} days={shown?.days || []} loading={viewState === 'loading' || viewState === 'refreshing'} loadingLabel={`Loading ${whoseMonth} ${monthLabel(month)}…`} onOpen={setSelectedDay} showWfh={showWfh} />}
         {tab === 'team' && canSeeOthers && <TeamBoard location={place} canMessage={canMessage} onOpenPerson={(id) => { setCalendarEmployeeId(id); setMonth(currentMonthKey()); setTab('calendar'); }} />}
-        {tab === 'insights' && <Insights calendar={calendar} month={month} employeeId={calendarEmployeeId} />}
+        {tab === 'insights' && <Insights calendar={shown} month={month} employeeId={calendarEmployeeId} />}
         {tab === 'reports' && canSeeOthers && <Reports month={month} place={place} />}
       </section>
 
@@ -234,7 +274,7 @@ export default function Attendance() {
           employee={viewed}
           isSelf={Boolean(isSelf)}
           perms={isSelf ? { ...dayPerms, canFixTimes: canOverride, canDecideLeave: false, canDecideRequests: false } : dayPerms}
-          payrollStatus={calendar?.payroll?.status || null}
+          payrollStatus={shown?.payroll?.status || null}
           showWfh={showWfh}
           onClose={() => setSelectedDay(null)}
           onSaved={(freshDay) => {
