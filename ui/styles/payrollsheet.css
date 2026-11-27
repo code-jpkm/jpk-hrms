@@ -127,3 +127,8 @@
 /* Payroll page: the button that opens the sheet */
 .slip-section-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .slip-section-tools .payroll-sheet-open{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 14px;font-size:13px}
+
+/* "Edit salary sheet" in the Prepare payroll card */
+.payroll-sheet-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:14px;padding:12px 14px;border:1px solid #C9D6E1;border-radius:10px;background:#EEF3F7}
+.payroll-sheet-row .payroll-sheet-main{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 18px;font-size:14px;white-space:nowrap}
+.payroll-sheet-row small{flex:1 1 220px;font-size:12.5px;line-height:1.45;font-weight:600;color:#3D4F5E}

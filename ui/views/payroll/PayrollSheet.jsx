@@ -80,7 +80,7 @@ export default function PayrollSheet({ runId, month, onClose, onSaved }) {
       if (!keep) { setPending({}); setHistory({ undo: [], redo: [] }); }
       setStale(false);
     } catch (err) {
-      setLoadError(err.message || 'Could not load the payroll sheet');
+      setLoadError(err.message || 'Could not load the salary sheet');
     }
   }, [runId]);
 
@@ -420,7 +420,7 @@ export default function PayrollSheet({ runId, month, onClose, onSaved }) {
     setSaving(true);
     setStatus({ kind: 'info', text: 'Saving…' });
     try {
-      const res = await put(`/payroll/runs/${runId}/sheet`, { changes, reason: 'Edited in the payroll sheet' }, { toast: false });
+      const res = await put(`/payroll/runs/${runId}/sheet`, { changes, reason: 'Edited in the salary sheet' }, { toast: false });
       const fresh = new Map((res.rows || []).map((r) => [r.slipId, r]));
       setData((d) => ({ ...d, columns: res.columns || d.columns, rows: d.rows.map((r) => fresh.get(r.slipId) || r), run: { ...d.run, summary: res.summary || d.run.summary } }));
       setPending({});
@@ -489,10 +489,10 @@ export default function PayrollSheet({ runId, month, onClose, onSaved }) {
 
   return (
     <div className="psheet-back" role="presentation">
-      <section className="psheet" role="dialog" aria-label={`Payroll sheet, ${monthTitle(month)}`}>
+      <section className="psheet" role="dialog" aria-label={`Salary sheet, ${monthTitle(month)}`}>
         <header className="psheet-head">
           <div className="psheet-title">
-            <small>PAYROLL SHEET</small>
+            <small>SALARY SHEET</small>
             <h2>{monthTitle(month)} <span className={`psheet-chip ${released ? 'rel' : 'draft'}`}>{released ? 'Released' : 'Draft'}</span></h2>
           </div>
           <label className="psheet-search">
@@ -505,7 +505,7 @@ export default function PayrollSheet({ runId, month, onClose, onSaved }) {
             <button type="button" className="secondary" onClick={downloadExcel} title="Download the salary statement as Excel"><Icon name="FileDown" size={15} /> Excel</button>
             {canEdit && <button type="button" className="secondary" onClick={() => { setPending({}); setHistory({ undo: [], redo: [] }); setStatus({ kind: 'info', text: 'Changes discarded.' }); }} disabled={!changeCount}>Discard</button>}
             {canEdit && <button type="button" className="primary" onClick={save} disabled={!changeCount || saving}><Icon name={saving ? 'Loader2' : 'Save'} size={15} className={saving ? 'spin' : ''} /> {saving ? 'Saving…' : changeCount ? `Save ${changeCount} change${changeCount === 1 ? '' : 's'}` : 'Saved'}</button>}
-            <button type="button" className="psheet-icon" onClick={close} aria-label="Close the payroll sheet"><Icon name="X" size={18} /></button>
+            <button type="button" className="psheet-icon" onClick={close} aria-label="Close the salary sheet"><Icon name="X" size={18} /></button>
           </div>
         </header>
 
