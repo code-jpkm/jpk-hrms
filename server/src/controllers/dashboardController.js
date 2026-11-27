@@ -258,11 +258,32 @@ exports.assistant = asyncHandler(async (req, res) => {
   const question = String(req.body?.question || '').trim();
   if (!question) throw new ApiError(400, 'Ask a question, for example "is Aindrila present today?"');
 
-  const { handleAssistantMessage } = require('../services/assistantActionService');
+  const { handleAssistantMessage, preview, ASK_ADMIN } = require('../services/assistantActionService');
+  const operator = require('../services/assistantOperatorService');
+  const superAdmin = operator.canOperate(req.user);
   const action = await handleAssistantMessage(req, question);
-  if (action) return res.json(action);
+  // The HR tasks (shift, leave, attendance, times) first. For the Super Admin a
+  // follow-up question from them goes to the operator instead, which can do more.
+  if (action && !(superAdmin && action.kind === 'ASK')) return res.json(action);
 
-  const { answerHrQuestion } = require('../services/hrAssistantService');
+  const { answerHrQuestion, classify } = require('../services/hrAssistantService');
+  if (superAdmin) {
+    // Anything else the Super Admin asks or wants changed: the operator, which
+    // works through the whole HRMS API. Plain attendance questions keep the
+    // quick answers below.
+    if (action || operator.mentionsChange(question) || classify(question) === 'UNKNOWN') {
+      const history = Array.isArray(req.body?.history) ? req.body.history.slice(-8).map((h) => ({ who: h?.who === 'me' ? 'me' : 'bot', text: String(h?.text || '').slice(0, 600) })) : [];
+      const out = await operator.runOperator(req, question, history, { preview });
+      if (out) return res.json(out);
+      // Gemini is off: the HR task's own follow-up question, else say what is missing.
+      if (action) return res.json(action);
+      if (operator.looksLikeChange(question)) return res.json({ answer: 'To change things from the chat I need Gemini, and it is not set up or not reachable right now (Settings → Integrations → AI).', intent: 'OPERATOR_UNAVAILABLE' });
+    }
+  } else if (operator.looksLikeChange(question)) {
+    // Changes beyond the HR tasks are for the Super Admin only.
+    return res.json({ answer: `I can't do that from the chat for you. ${ASK_ADMIN}`, intent: 'ACTION_DENIED', denied: true });
+  }
+  if (action) return res.json(action);
   const answer = await answerHrQuestion({
     tenantId: req.tenantId,
     user: req.user,

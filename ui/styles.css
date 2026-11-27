@@ -1916,10 +1916,6 @@ body[data-period="night"] .nexus-page p,body[data-period="night"] .nexus-page .m
 .hrbot-typing i{width:6px;height:6px;border-radius:50%;background:#5D7284;animation:hrbotBlink 1.3s infinite}
 .hrbot-typing i:nth-child(2){animation-delay:.18s}.hrbot-typing i:nth-child(3){animation-delay:.36s}
 @keyframes hrbotBlink{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
-.hrbot-suggest{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 10px}
-.hrbot-suggest button{font-size:11.5px;padding:6px 10px;border-radius:999px;background:#FFFFFF;
-  border:1px solid var(--edge);color:var(--ink-2);box-shadow:none;font-weight:600}
-.hrbot-suggest button:hover{border-color:var(--indigo);color:var(--indigo);transform:none}
 .hrbot-form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--edge-2);background:#FFFFFF}
 .hrbot-form input{flex:1;min-height:40px}
 .hrbot-form button{min-height:40px;padding:0 15px}
@@ -1941,6 +1937,20 @@ body[data-period="night"] .nexus-page p,body[data-period="night"] .nexus-page .m
 .hrbot-act-done .hrbot-act-state{color:#1E7B4C}
 .hrbot-act-denied .hrbot-act-state,.hrbot-act-failed .hrbot-act-state{color:#B85C10}
 .hrbot-act-cancelled{opacity:.72}
+.hrbot-steps{margin:2px 0 0;padding:0 0 0 18px;display:grid;gap:8px}
+.hrbot-steps>li{color:var(--ink);line-height:1.4}
+.hrbot-step-say{font-weight:600;font-size:12.5px}
+.hrbot-changes{list-style:none;margin:5px 0 0;padding:0;display:grid;gap:3px}
+.hrbot-changes li{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:8px;font-size:11.5px;align-items:baseline}
+.hrbot-changes b{color:var(--ink-3);font-weight:600}
+.hrbot-changes s{color:#9A4B12;text-decoration:line-through;text-decoration-color:rgba(154,75,18,.45)}
+.hrbot-changes em{font-style:normal;font-weight:700;color:#1E7B4C}
+.hrbot-tech{margin-top:4px;font-size:11px;color:var(--ink-3)}
+.hrbot-tech summary{cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;word-break:break-all}
+.hrbot-tech pre{margin:5px 0 0;max-height:180px;overflow:auto;background:#F5F7F9;border:1px solid var(--edge-2);border-radius:6px;padding:7px 8px;font-size:10.5px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.hrbot-act-danger{border-color:#F0B9A8}
+.hrbot-act-buttons button.danger{background:#B42318!important;border-color:#B42318!important;color:#fff!important}
+.hrbot-typing{align-items:center}.hrbot-typing small{margin-left:8px;font-size:11.5px;color:var(--ink-3);font-weight:600}
 @keyframes hrbotSpin{to{transform:rotate(360deg)}}
 .hrbot-act .spin{animation:hrbotSpin .9s linear infinite}
 

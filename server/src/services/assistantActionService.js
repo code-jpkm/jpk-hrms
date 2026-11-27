@@ -435,13 +435,13 @@ function unsign(token) {
   try { return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch (_) { return null; }
 }
 
-function preview(req, { title, lines, confirmLabel, action, note }) {
+function preview(req, { title, lines, confirmLabel, action, note, steps, danger }) {
   const token = sign({ t: String(req.tenantId), u: String(req.user._id), x: Date.now() + TOKEN_LIFE_MS, n: crypto.randomBytes(9).toString('base64url'), a: action });
   return {
     kind: 'PREVIEW',
     intent: 'ACTION_PREVIEW',
     answer: `${title}. Check the details and press ${confirmLabel} to save it.`,
-    action: { token, title, lines, confirmLabel, note: note || '' }
+    action: { token, title, lines: lines || [], confirmLabel, note: note || '', ...(steps ? { steps } : {}), ...(danger ? { danger: true } : {}) }
   };
 }
 
@@ -718,6 +718,8 @@ async function confirmAssistantAction(req, token) {
   const a = payload.a || {};
   req.aiSource = 'AI';
   try {
+    // The Super Admin's operations: API calls, run through the same routes as the screens.
+    if (a.intent === 'OPERATE') return await require('./assistantOperatorService').executeSteps(req, a);
     if (a.intent === 'SHIFT') {
       if (!canManageShifts(req.user)) return deny('change shifts');
       const employees = await Employee.find({ tenantId: req.tenantId, _id: { $in: a.employeeIds } });
@@ -782,4 +784,4 @@ async function confirmAssistantAction(req, token) {
   }
 }
 
-module.exports = { handleAssistantMessage, confirmAssistantAction, looksLikeAction, parseRules, readShiftPattern, readDates, findPeople, timeRangeFrom, ASK_ADMIN };
+module.exports = { handleAssistantMessage, confirmAssistantAction, looksLikeAction, parseRules, readShiftPattern, readDates, findPeople, timeRangeFrom, preview, ASK_ADMIN };

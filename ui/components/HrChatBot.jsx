@@ -15,15 +15,14 @@ import { useAuth } from '../state/AuthContext.jsx';
  * absent or remove LOP, and correct in / out times. The server checks the
  * person's permissions; without one the chat says to contact the administrator
  * or HR. Nothing is saved until the change card is confirmed.
+ *
+ * For the Super Admin it can do any operation in the HRMS (settings, people,
+ * permissions, payroll, holidays…): the card lists each step and the values
+ * before and after. No suggestion chips (removed at the Super Admin's request).
  */
 
-const SUGGESTIONS = [
-  'Is Aindrila present today?',
-  'Who is absent today?',
-  'Apply 1 day EL for me tomorrow',
-  'Change Punit\'s shift Mon–Fri 10:30 am to 6:30 pm and Saturday 10:30 am to 3:30 pm',
-  'Mark Sukesh present on 12 Nov'
-];
+const GREETING = 'Ask me about attendance, absences, holidays, leave and in / out times. I can also do HR tasks you are allowed to do — change a shift, apply or approve leave, mark a day present or remove LOP, correct in / out times. I show you the change first and save it only when you confirm.';
+const GREETING_SUPER_ADMIN = 'Ask me anything, or tell me what to change in the HRMS — settings, people and logins, permissions, shifts, attendance, leave, holidays, payroll, notices. I show you exactly what will change and save it only when you confirm.';
 
 const YES = /^(yes|y|ok|okay|confirm|confirmed|do it|go ahead|sure|haan|ha|ji|yes please|proceed)\.?!?$/i;
 const NO = /^(no|n|cancel|stop|don'?t|nope|na|nahi)\.?!?$/i;
@@ -33,9 +32,8 @@ export default function HrChatBot() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
-  const [log, setLog] = useState([
-    { who: 'bot', text: 'Ask me about attendance, absences, holidays, leave and in / out times. I can also do HR tasks you are allowed to do — change a shift, apply or approve leave, mark a day present or remove LOP, correct in / out times. I show you the change first and save it only when you confirm.' }
-  ]);
+  const [log, setLog] = useState([]);
+  const superAdmin = user?.role === 'SUPER_ADMIN';
   const logRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -71,8 +69,8 @@ export default function HrChatBot() {
     setBusy(true);
     try {
       const res = await post('/dashboard/assistant/confirm', { token: card.action.token }, { toast: false });
-      setCard(index, res?.denied ? 'denied' : 'done');
-      setLog((l) => [...l, { who: res?.denied ? 'deny' : 'bot', text: res?.answer || 'Done.' }]);
+      setCard(index, res?.denied ? 'denied' : res?.failed ? 'failed' : 'done');
+      setLog((l) => [...l, { who: res?.denied ? 'deny' : res?.failed ? 'err' : 'bot', text: res?.answer || 'Done.' }]);
     } catch (err) {
       setCard(index, 'failed');
       setLog((l) => [...l, { who: 'err', text: err?.message || 'Could not save that.' }]);
@@ -101,11 +99,16 @@ export default function HrChatBot() {
     }
     // A new request replaces a change card that was never confirmed.
     if (pending > -1) setCard(pending, 'cancelled');
+    // The last few messages go along, so "yes, and for Partha too" makes sense.
+    const history = log.slice(-8).map((m) => ({
+      who: m.who === 'me' ? 'me' : 'bot',
+      text: m.action ? `${m.action.title} (${m.state === 'done' ? 'saved' : m.state === 'open' ? 'waiting for Confirm' : 'not saved'})` : m.text
+    }));
     setLog((l) => [...l, { who: 'me', text: q }]);
     setText('');
     setBusy(true);
     try {
-      const res = await post('/dashboard/assistant', { question: q }, { toast: false });
+      const res = await post('/dashboard/assistant', { question: q, history }, { toast: false });
       if (res?.action) setLog((l) => [...l, { who: 'bot', text: res.answer, action: res.action, state: 'open' }]);
       else setLog((l) => [...l, { who: res?.denied ? 'deny' : 'bot', text: res?.answer || 'I could not work that one out.' }]);
     } catch (err) {
@@ -125,12 +128,13 @@ export default function HrChatBot() {
             <span className="v25-glyph" style={{ width: 34, height: 34 }}><Icon name="Sparkles" size={16} /></span>
             <span>
               <b>HR Assistant</b>
-              <small>Answers and HR tasks · within your permissions</small>
+              <small>{superAdmin ? 'Super Admin · you confirm every change' : 'Answers and HR tasks · within your permissions'}</small>
             </span>
             <button onClick={() => setOpen(false)} aria-label="Close assistant"><Icon name="X" size={17} /></button>
           </header>
 
           <div className="hrbot-log" ref={logRef}>
+            <div className="hrbot-msg bot"><span>{superAdmin ? GREETING_SUPER_ADMIN : GREETING}</span></div>
             {log.map((m, i) => (m.action ? (
               <ActionCard key={i} message={m} onConfirm={() => confirm(i)} onCancel={() => cancel(i)} />
             ) : (
@@ -139,16 +143,8 @@ export default function HrChatBot() {
                 <span>{m.text}</span>
               </div>
             )))}
-            {busy && <div className="hrbot-typing"><i /><i /><i /></div>}
+            {busy && <div className="hrbot-typing"><i /><i /><i />{superAdmin && <small>Working on it…</small>}</div>}
           </div>
-
-          {log.length <= 1 && (
-            <div className="hrbot-suggest">
-              {SUGGESTIONS.map((s) => (
-                <button key={s} type="button" onClick={() => ask(s)}>{s}</button>
-              ))}
-            </div>
-          )}
 
           <div className="hrbot-form">
             <input
@@ -183,17 +179,39 @@ function ActionCard({ message, onConfirm, onCancel }) {
   const { action, state } = message;
   const settled = state !== 'open' && state !== 'working';
   return (
-    <div className={`hrbot-act hrbot-act-${state}`} role="group" aria-label={action.title}>
+    <div className={`hrbot-act hrbot-act-${state}${action.danger ? ' hrbot-act-danger' : ''}`} role="group" aria-label={action.title}>
       <div className="hrbot-act-title"><Icon name="ClipboardCheck" size={15} /><b>{action.title}</b></div>
-      <dl>
-        {action.lines.map((line) => (
-          <div key={`${line.label}:${line.value}`}><dt>{line.label}</dt><dd>{line.value}</dd></div>
-        ))}
-      </dl>
+      {(action.lines || []).length > 0 && (
+        <dl>
+          {action.lines.map((line) => (
+            <div key={`${line.label}:${line.value}`}><dt>{line.label}</dt><dd>{line.value}</dd></div>
+          ))}
+        </dl>
+      )}
+      {(action.steps || []).length > 0 && (
+        <ol className="hrbot-steps">
+          {action.steps.map((step, i) => (
+            <li key={i}>
+              <span className="hrbot-step-say">{step.say}</span>
+              {(step.changes || []).length > 0 && (
+                <ul className="hrbot-changes">
+                  {step.changes.map((c, j) => (
+                    <li key={j}><b>{c.what}</b><span><s>{c.from}</s> → <em>{c.to}</em></span></li>
+                  ))}
+                </ul>
+              )}
+              <details className="hrbot-tech">
+                <summary>{step.method} {step.path}</summary>
+                <pre>{step.body && Object.keys(step.body).length ? JSON.stringify(step.body, null, 2) : '(nothing sent)'}</pre>
+              </details>
+            </li>
+          ))}
+        </ol>
+      )}
       {action.note && <p className="hrbot-act-note">{action.note}</p>}
       {!settled ? (
         <div className="hrbot-act-buttons">
-          <button type="button" className="primary" onClick={onConfirm} disabled={state === 'working'}>
+          <button type="button" className={action.danger ? 'primary danger' : 'primary'} onClick={onConfirm} disabled={state === 'working'}>
             {state === 'working' ? <><Icon name="Loader2" size={14} className="spin" /> Saving…</> : <><Icon name="Check" size={14} /> {action.confirmLabel}</>}
           </button>
           <button type="button" className="secondary" onClick={onCancel} disabled={state === 'working'}>Cancel</button>

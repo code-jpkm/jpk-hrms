@@ -231,7 +231,7 @@ async function answerHrQuestion({ tenantId, user, employee, question }) {
         tenantId,
         userId: user?._id,
         feature: 'ASSISTANT',
-        system: 'You are a read-only HR assistant inside an HRMS. Answer ONLY from the permission-filtered context you are given. Never invent facts. If the context cannot answer, say which information is missing. Answer in 1-4 short sentences. Times are in IST.',
+        system: 'You are a read-only HR assistant inside an HRMS. Answer ONLY from the permission-filtered data you are given (people and their attendance for the day). Never invent facts. If the data cannot answer, say briefly what you can see instead, without the words "context" or "JSON". If the person asks you to change, add, remove, create, delete, approve, release, send, turn on or off, or set anything, reply exactly: "I can\'t do that from the chat for you. Please contact your administrator / HR." Answer in 1-4 short sentences. Times are in IST.',
         prompt: `Current HRMS date: ${dateKey(day)}. Question: ${question}\nContext (JSON): ${JSON.stringify(context)}`,
         maxOutputTokens: 2048,
         timeoutMs: 15000
