@@ -247,14 +247,20 @@ exports.aiWidget = asyncHandler(async (req, res) => {
 /**
  * POST /api/dashboard/assistant
  *
- * Read-only conversational answers for the corner chat. It never writes:
- * write operations stay behind /api/ai/command with its permission checks and
- * dry-run preview. Everything here is filtered through the caller's own
- * employee scope, so the chat can never reveal someone they cannot already see.
+ * The corner chat. Questions get answers filtered through the caller's own
+ * employee scope, so the chat never reveals someone they cannot already see.
+ * Requests to change something (shift, leave, attendance, in / out times) are
+ * checked against the caller's own permissions: without permission the chat
+ * says so ("contact your administrator / HR"); with it, the chat shows what will
+ * change and nothing is saved until POST /assistant/confirm.
  */
 exports.assistant = asyncHandler(async (req, res) => {
   const question = String(req.body?.question || '').trim();
   if (!question) throw new ApiError(400, 'Ask a question, for example "is Aindrila present today?"');
+
+  const { handleAssistantMessage } = require('../services/assistantActionService');
+  const action = await handleAssistantMessage(req, question);
+  if (action) return res.json(action);
 
   const { answerHrQuestion } = require('../services/hrAssistantService');
   const answer = await answerHrQuestion({
@@ -264,6 +270,12 @@ exports.assistant = asyncHandler(async (req, res) => {
     question
   });
   res.json(answer);
+});
+
+/** POST /api/dashboard/assistant/confirm {token}: saves a change the chat showed (permission checked again). */
+exports.assistantConfirm = asyncHandler(async (req, res) => {
+  const { confirmAssistantAction } = require('../services/assistantActionService');
+  res.json(await confirmAssistantAction(req, req.body?.token));
 });
 
 /* ------------------------------------------------------------------ */

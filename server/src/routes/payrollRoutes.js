@@ -27,6 +27,9 @@ router.post('/run', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'),
 router.post('/runs/:runId/release', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.releaseRun);
 router.delete('/runs/:runId', requireAbility('PAYROLL', 'RUN', 'SUPER_ADMIN', 'HR_ADMIN'), controller.deleteRun);
 router.get('/runs/:runId/salary-sheet', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheet);
+// The payroll sheet: every payslip of the month as one editable table.
+router.get('/runs/:runId/sheet', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.sheet);
+router.put('/runs/:runId/sheet', requireAbility('PAYROLL', 'ADJUST', 'SUPER_ADMIN', 'HR_ADMIN'), controller.saveSheet);
 router.get('/runs/:runId/salary-sheet.csv', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheetCsv);
 router.get('/runs/:runId/salary-sheet.xlsx', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheetXlsx);
 router.get('/runs/:runId/salary-sheet.pdf', requireAbility('PAYROLL', 'READ', 'SUPER_ADMIN', 'HR_ADMIN'), controller.salarySheetPdf);

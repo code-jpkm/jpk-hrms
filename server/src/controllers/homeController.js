@@ -67,8 +67,13 @@ exports.home = asyncHandler(async (req, res) => {
       LeaveRequest.countDocuments({ tenantId, employeeId: me._id, status: 'PENDING' }),
       Regularization.countDocuments({ tenantId, employeeId: me._id, status: 'PENDING' }),
       // Same choice as attendance: the latest-starting assignment covering today,
-      // including open-ended ones (no end date), which the old query skipped.
-      ShiftAssignment.findOne({ tenantId, employeeId: me._id, fromDate: { $lte: window.$lte }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: window.$gte } }] }).sort('-fromDate -createdAt').lean(),
+      // including open-ended ones (no end date), which the old query skipped, and
+      // only rows that apply on today's weekday (Mon–Fri / Saturday patterns).
+      ShiftAssignment.find({ tenantId, employeeId: me._id, fromDate: { $lte: window.$lte }, $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: window.$gte } }] }).sort('-fromDate -createdAt').lean()
+        .then((rows) => {
+          const weekday = new Date(`${key}T00:00:00.000Z`).getUTCDay();
+          return rows.find((row) => !Array.isArray(row.weekdays) || !row.weekdays.length || row.weekdays.map(Number).includes(weekday)) || null;
+        }),
       PayrollRule.findOne({ tenantId, active: true }).select('lockUntilMonthEnds').lean(),
       isFingerprintOnly(me, tenantId)
     ]);

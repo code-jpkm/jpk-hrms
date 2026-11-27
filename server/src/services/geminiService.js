@@ -17,6 +17,7 @@ Never invent an employee, date, amount, leave balance, scope, shift or approval.
 Resolve natural dates to YYYY-MM-DD only when the user supplied enough information. Resolve months to YYYY-MM.
 Use these parameter conventions when relevant:
 employee: name or employee code string; employees: array; date/fromDate/toDate; shiftName/startTime/endTime; weekdays array of 0=Sun..6=Sat;
+for a shift with different timings on different days use pattern: [{weekdays:[1,2,3,4,5],startTime:"10:30",endTime:"18:30"},{weekdays:[6],startTime:"10:30",endTime:"15:30"}] (days not named are the weekly off) and fromDate only when the user named a start day;
 leaveType, days, dayPart, reason, requestId, decision APPROVED|REJECTED;
 for REGULARIZE_ATTENDANCE use requestedCheckIn/checkIn and requestedCheckOut/checkOut as HH:mm; requestType must be ATTENDANCE_CORRECTION, LATE_IN, EARLY_LEAVE, MEDICAL, or SPECIAL; use requestedMinutes and reason for permission-style requests;
 fields object for UPDATE_EMPLOYEE; earnings object and otherDeductions/effectiveMonth for UPDATE_SALARY_MASTER; salary statutory PF/ESI/PT are calculated by HRMS rules, do not invent them;
@@ -25,6 +26,7 @@ targetUser, resource ATTENDANCE|SALARY|EMPLOYEE_PROFILE|LEAVE, scope BOTH|OFFICE
 policy/rule changes in fields object.
 Examples:
 "Hey update the shift for Sayantan on 10th August it will be 11am to 5pm" => {"intent":"ASSIGN_SHIFT","parameters":{"employee":"Sayantan","date":"2026-08-10","startTime":"11:00","endTime":"17:00"}}.
+"change Punit shift Monday to Friday 10:30 am to 6:30 pm and Saturday 10:30 am to 3:30 pm" => {"intent":"ASSIGN_SHIFT","parameters":{"employee":"Punit","pattern":[{"weekdays":[1,2,3,4,5],"startTime":"10:30","endTime":"18:30"},{"weekdays":[6],"startTime":"10:30","endTime":"15:30"}]}}.
 "Apply 1 day EL for FAC001 on 2026-08-18 reason family work" => APPLY_LEAVE.
 "Regularize Sayantan on 2026-08-12 check in 10:05 and check out 18:15, client visit" => REGULARIZE_ATTENDANCE with requestedCheckIn 10:05, requestedCheckOut 18:15 and reason client visit.
 "Approve Sayantan's pending leave on 2026-08-18" => DECIDE_LEAVE with decision APPROVED.

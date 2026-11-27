@@ -10,7 +10,7 @@ const { findAllowedSite } = require('../utils/geo');
 const { getScopedEmployeeIds } = require('../services/scopeService');
 const { importBiometricLogs } = require('../services/biometricService');
 const { evaluateAttendanceRecord, evaluateMonth, getPolicy } = require('../services/attendanceRulesService');
-const { resolveAttendanceDateForPunch, computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace } = require('../utils/shift');
+const { resolveAttendanceDateForPunch, computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace, assignmentAppliesOnWeekday, latestAssignmentOn } = require('../utils/shift');
 const { autoCloseStalePunches, isStillOpenForCheckout, punchMessage } = require('../services/attendanceAutoCloseService');
 const { buildCalendar } = require('../services/attendanceCalendarService');
 const { runDayAction } = require('../services/attendanceDayActionService');
@@ -122,7 +122,7 @@ exports.teamToday = asyncHandler(async (req, res) => {
   const rowBy = new Map(rows.map((r) => [String(r.employeeId), r]));
   const leaveBy = new Map(leaves.map((l) => [String(l.employeeId), l]));
   const shiftBy = new Map();
-  for (const a of assignments) shiftBy.set(String(a.employeeId), a.shiftId); // sorted by fromDate: latest wins
+  for (const a of assignments) if (assignmentAppliesOnWeekday(a, day)) shiftBy.set(String(a.employeeId), a.shiftId); // sorted by fromDate: latest wins
   const now = new Date();
   const out = employees.map((e) => {
     const id = String(e._id);
@@ -350,12 +350,7 @@ exports.mobileState = asyncHandler(async (req, res) => {
   const policy = await getPolicy(req.tenantId);
   const offset = resolveTimezoneOffset(policy);
   const day = startOfDay(context.attendanceDate);
-  const assignment = await ShiftAssignment.findOne({
-    tenantId: req.tenantId,
-    employeeId: context.employee._id,
-    fromDate: { $lte: day },
-    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }]
-  }).populate('shiftId').sort('-fromDate -createdAt');
+  const assignment = await latestAssignmentOn({ tenantId: req.tenantId, employeeId: context.employee._id, day });
   const shift = assignment?.shiftId || await Shift.findOne({ tenantId: req.tenantId, active: true }).sort('createdAt');
   const window = shift ? computeShiftWindow(shift, day, offset) : null;
   const record = context.attendance;

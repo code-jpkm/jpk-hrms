@@ -21,7 +21,7 @@ const ShiftAssignment = require('../models/ShiftAssignment');
 const Tenant = require('../models/Tenant');
 const ApiError = require('../utils/apiError');
 const { startOfDay, endOfDay, monthRange, eachDate, dateKey, holidayDateKey, holidayAppliesTo, companyToday, formatCompanyTime } = require('../utils/date');
-const { computeShiftWindow, minutesBetween, resolveTimezoneOffset } = require('../utils/shift');
+const { computeShiftWindow, minutesBetween, resolveTimezoneOffset, assignmentAppliesOnWeekday } = require('../utils/shift');
 const { getPolicy } = require('./attendanceRulesService');
 const { punchLocations, locationLabel } = require('../utils/punchLocation');
 const { workbookBuffer, columnLetter } = require('../utils/xlsxWriter');
@@ -110,7 +110,7 @@ function shiftOn(assignments, dayStart, defaultShift, from, to) {
   const assignment = [...assignments].reverse().find((a) => {
     const aFrom = a.fromDate ? startOfDay(a.fromDate) : from;
     const aTo = a.toDate ? endOfDay(a.toDate) : to;
-    return dayStart >= aFrom && dayStart <= aTo;
+    return dayStart >= aFrom && dayStart <= aTo && assignmentAppliesOnWeekday(a, dayStart);
   });
   return assignment?.shiftId || defaultShift || null;
 }

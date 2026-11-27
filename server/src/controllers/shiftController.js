@@ -8,6 +8,7 @@ const { parseTimeToMinutes } = require('../utils/shift');
 const { rebuildAttendanceForEmployees } = require('../services/attendanceReprocessService');
 const { evaluateAttendanceRecord } = require('../services/attendanceRulesService');
 const { syncPayrollAfterChange } = require('../services/payrollSlipService');
+const { upsertShiftAssignment, normalizeWeekdays } = require('../services/shiftAssignmentService');
 const Attendance = require('../models/Attendance');
 const { startOfDay, endOfDay, dateKey, companyToday } = require('../utils/date');
 
@@ -85,14 +86,22 @@ exports.assign = asyncHandler(async (req, res) => {
   if (selectedWeekdays.length && fromDate && toDate) {
     for (let d = new Date(`${ymd(fromDate)}T00:00:00.000Z`), end = new Date(`${ymd(toDate)}T00:00:00.000Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) if (selectedWeekdays.includes(d.getUTCDay())) dates.push(new Date(d));
   }
+  // Weekdays with no end date ("every Saturday from 1 December"): one row that
+  // applies on those weekdays from then on. With an end date: one row per day.
+  const openWeekdays = !toDate ? normalizeWeekdays(selectedWeekdays) : undefined;
   for (const employee of employees) {
     const ranges = dates.length ? dates.map((date)=>({ fromDate: date, toDate: date })) : [{ fromDate, toDate }];
     for (const range of ranges) {
-      const assignment = await ShiftAssignment.findOneAndUpdate(
-        { tenantId: req.tenantId, employeeId: employee._id, fromDate: range.fromDate ? new Date(range.fromDate) : null, toDate: range.toDate ? new Date(range.toDate) : null },
-        { tenantId: req.tenantId, employeeId: employee._id, shiftId, ...range, assignedBy: req.user._id },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      ).populate('employeeId', 'employeeCode firstName lastName').populate('shiftId');
+      const saved = await upsertShiftAssignment({
+        tenantId: req.tenantId,
+        employeeId: employee._id,
+        shiftId,
+        fromDate: range.fromDate ? new Date(range.fromDate) : null,
+        toDate: range.toDate ? new Date(range.toDate) : null,
+        weekdays: openWeekdays,
+        assignedBy: req.user._id
+      });
+      const assignment = await ShiftAssignment.findById(saved._id).populate('employeeId', 'employeeCode firstName lastName').populate('shiftId');
       assignments.push(assignment);
     }
   }

@@ -778,6 +778,57 @@ exports.editPayslip = asyncHandler(async (req, res) => {
   res.json({ ...response, message: `${who}'s payslip saved. Net pay ${money(slip.netPay)}.${response.changedSinceSent ? ' It was already sent: send it again so they get the corrected one.' : ''}` });
 });
 
+/**
+ * GET /payroll/runs/:runId/sheet — the month's payslips as one table for the
+ * payroll sheet (Excel-like editing). ?employeeId= returns just that person's row
+ * (after an attendance change from the sheet).
+ */
+exports.sheet = asyncHandler(async (req, res) => {
+  const { sheetColumns, sheetRow } = require('../services/payrollSheetService');
+  const run = await PayrollRun.findOne({ _id: req.params.runId, tenantId: req.tenantId });
+  if (!run) throw new ApiError(404, 'Payroll run not found');
+  const allowed = await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' });
+  const all = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id, employeeId: { $in: allowed } })
+    .populate('employeeId', 'employeeCode firstName lastName department designation workLocation');
+  const columns = sheetColumns(all.map((s) => s.toObject()));
+  let slips = all;
+  if (req.query.employeeId) slips = all.filter((s) => String(s.employeeId?._id) === String(req.query.employeeId));
+  const rows = slips.map((s) => sheetRow(s, columns)).sort((a, b) => String(a.employeeCode).localeCompare(String(b.employeeCode), 'en', { numeric: true }));
+  res.json({
+    run: { _id: run._id, month: run.month, status: run.status, releasedAt: run.releasedAt || null, summary: run.summary },
+    canEdit: isPayrollAdmin(req.user) || hasAbility(req.user, 'PAYROLL', 'ADJUST'),
+    canChangeAttendance: ['SUPER_ADMIN', 'HR_ADMIN'].includes(req.user.role) || hasAbility(req.user, 'ATTENDANCE', 'OVERRIDE'),
+    columns,
+    rows
+  });
+});
+
+/**
+ * PUT /payroll/runs/:runId/sheet {changes:[{slipId, version, set:{ref:amount}, revert:[ref], extra:{E,D}, notes}], reason}
+ * — saves the sheet into the payslips (all or nothing). Works before and after release; nobody is notified.
+ */
+exports.saveSheet = asyncHandler(async (req, res) => {
+  const { sheetColumns, sheetRow, saveSheetChanges } = require('../services/payrollSheetService');
+  const run = await PayrollRun.findOne({ _id: req.params.runId, tenantId: req.tenantId });
+  if (!run) throw new ApiError(404, 'Payroll run not found');
+  const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
+  const allowed = new Set((await getScopedEmployeeIds({ user: req.user, employee: req.employee, resource: 'SALARY' })).map(String));
+  const owners = await SalarySlip.find({ tenantId: req.tenantId, _id: { $in: changes.map((c) => String(c.slipId || '')) } }).select('employeeId').lean();
+  if (owners.some((s) => !allowed.has(String(s.employeeId)))) throw new ApiError(403, 'Some of these payslips are outside your salary scope');
+  const { saved, slips } = await saveSheetChanges(req, run, changes, req.body?.reason);
+  const all = await SalarySlip.find({ tenantId: req.tenantId, payrollRunId: run._id }).select('calculated earnings deductions edits manualAdjustments').lean();
+  const columns = sheetColumns(all);
+  const rows = slips.map((s) => sheetRow(s, columns));
+  const resend = rows.filter((r) => r.changedSinceSent).length;
+  res.json({
+    saved,
+    rows,
+    columns,
+    summary: run.summary,
+    message: `${saved} payslip${saved === 1 ? '' : 's'} saved.${resend ? ` ${resend} of them ${resend === 1 ? 'was' : 'were'} already sent: send ${resend === 1 ? 'it' : 'them'} again so they get the corrected payslip.` : ''}`
+  });
+});
+
 /** DELETE /payroll/slips/:id/payslip — back to the calculated payslip. */
 exports.resetPayslip = asyncHandler(async (req, res) => {
   const slip = await findScopedSlip(req, req.params.id);

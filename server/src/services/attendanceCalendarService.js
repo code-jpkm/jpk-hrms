@@ -14,7 +14,7 @@ const Shift = require('../models/Shift');
 const Regularization = require('../models/Regularization');
 const ApiError = require('../utils/apiError');
 const { startOfDay, endOfDay, monthRange, eachDate, dateKey, holidayDateKey, holidayAppliesTo, companyToday } = require('../utils/date');
-const { computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace } = require('../utils/shift');
+const { computeShiftWindow, minutesBetween, resolveTimezoneOffset, effectiveGraceMinutes, lateMinutesAfterGrace, assignmentAppliesOnWeekday } = require('../utils/shift');
 const { evaluateMonth, getPolicy } = require('./attendanceRulesService');
 const { isStillOpenForCheckout } = require('./attendanceAutoCloseService');
 const { punchLocations } = require('../utils/punchLocation');
@@ -40,7 +40,7 @@ function shiftOn(assignments, dayStart, defaultShift, from, to) {
   const assignment = [...assignments].reverse().find((a) => {
     const assignmentFrom = a.fromDate ? startOfDay(a.fromDate) : from;
     const assignmentTo = a.toDate ? endOfDay(a.toDate) : to;
-    return dayStart >= assignmentFrom && dayStart <= assignmentTo;
+    return dayStart >= assignmentFrom && dayStart <= assignmentTo && assignmentAppliesOnWeekday(a, dayStart);
   });
   return assignment?.shiftId || defaultShift || null;
 }

@@ -81,29 +81,60 @@ function computeShiftWindow(shift, shiftDate, timezoneOffsetMinutes = DEFAULT_TI
   return { start, end, allowedStart, allowedEnd, durationMinutes: duration, timezoneOffsetMinutes: Number(timezoneOffsetMinutes || 0) };
 }
 
-async function findActiveShiftAssignment({ tenantId, employeeId, at, timezoneOffsetMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES }) {
+/** 0 = Sunday … 6 = Saturday for a calendar day, as startOfDay / dateKey / calendarDayStart give it. */
+function weekdayOfDay(day) {
+  return new Date(day).getDay();
+}
+
+/** A row limited to some weekdays (Mon–Fri, Saturdays…) applies only on those days; a row without a list applies every day. */
+function assignmentAppliesOnWeekday(assignment, day) {
+  const days = assignment?.weekdays;
+  if (!Array.isArray(days) || !days.length) return true;
+  return days.map(Number).includes(weekdayOfDay(day));
+}
+
+/**
+ * The shift row that decides one day: of the rows covering the day, the
+ * latest-starting one (newest on a tie) whose weekdays include it. Every shift
+ * lookup uses this rule (directly, or on rows it already loaded).
+ */
+async function latestAssignmentOn({ tenantId, employeeId, day, populate = true, lean = false }) {
   const ShiftAssignment = require('../models/ShiftAssignment');
-  const date = calendarDayStart(at || new Date(), timezoneOffsetMinutes);
-  return ShiftAssignment.findOne({
+  let query = ShiftAssignment.find({
     tenantId,
     employeeId,
-    fromDate: { $lte: date },
-    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: date } }]
-  }).populate('shiftId').sort('-fromDate -createdAt');
+    fromDate: { $lte: day },
+    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }]
+  }).sort('-fromDate -createdAt');
+  if (populate) query = query.populate('shiftId');
+  if (lean) query = query.lean();
+  const rows = await query;
+  return rows.find((row) => assignmentAppliesOnWeekday(row, day)) || null;
+}
+
+/** From rows sorted oldest first (fromDate, createdAt): the row that decides `day` (see latestAssignmentOn). */
+function pickAssignmentForDay(rowsOldestFirst, day, { from = new Date(0), to = new Date(8640000000000000) } = {}) {
+  const dayStart = startOfDay(day);
+  for (let i = rowsOldestFirst.length - 1; i >= 0; i -= 1) {
+    const row = rowsOldestFirst[i];
+    const rowFrom = row.fromDate ? startOfDay(row.fromDate) : from;
+    const rowTo = row.toDate ? new Date(new Date(row.toDate).setHours(23, 59, 59, 999)) : to;
+    if (dayStart >= rowFrom && dayStart <= rowTo && assignmentAppliesOnWeekday(row, dayStart)) return row;
+  }
+  return null;
+}
+
+async function findActiveShiftAssignment({ tenantId, employeeId, at, timezoneOffsetMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES }) {
+  const date = calendarDayStart(at || new Date(), timezoneOffsetMinutes);
+  return latestAssignmentOn({ tenantId, employeeId, day: date });
 }
 
 async function resolveAttendanceDateForPunch({ tenantId, employeeId, timestamp, timezoneOffsetMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES }) {
-  const ShiftAssignment = require('../models/ShiftAssignment');
   const ts = new Date(timestamp);
   const today = calendarDayStart(ts, timezoneOffsetMinutes);
   const candidates = [today, new Date(today.getTime() - 24 * 60 * 60 * 1000)];
   for (const candidate of candidates) {
-    const assignment = await ShiftAssignment.findOne({
-      tenantId,
-      employeeId,
-      fromDate: { $lte: candidate },
-      $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: candidate } }]
-    }).populate('shiftId').sort('-fromDate -createdAt');
+    const assignment = await latestAssignmentOn({ tenantId, employeeId, day: candidate });
     const shift = assignment?.shiftId;
     if (!shift) continue;
     const window = computeShiftWindow(shift, candidate, timezoneOffsetMinutes);
@@ -239,6 +270,11 @@ module.exports = {
   parseTimeToMinutes,
   computeShiftWindow,
   resolveAttendanceDateForPunch,
+  findActiveShiftAssignment,
+  weekdayOfDay,
+  assignmentAppliesOnWeekday,
+  latestAssignmentOn,
+  pickAssignmentForDay,
   statusFromWorkedMinutes,
   minutesBetween,
   startOfDay,

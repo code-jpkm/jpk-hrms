@@ -19,6 +19,7 @@ const PayrollRun = require('../models/PayrollRun');
 const SalarySlip = require('../models/SalarySlip');
 const { monthRange, eachDate, startOfDay, endOfDay, dateKey, holidayDateKey, holidayAppliesTo, companyToday } = require('../utils/date');
 const { calculateSalary, roundMoney } = require('../utils/salary');
+const { assignmentAppliesOnWeekday } = require('../utils/shift');
 const { calculatedFromEngine, applySlipEdits } = require('./payslipModel');
 const { getActiveSalaryMastersMap } = require('./salaryMasterService');
 const { loanInstalmentsFor } = require('./loanService');
@@ -50,7 +51,7 @@ async function attendanceStatsFor(employee, month, tenantId, rule = null) {
     return [...assignments].reverse().find((assignment) => {
       const assignmentFrom = assignment.fromDate ? startOfDay(assignment.fromDate) : from;
       const assignmentTo = assignment.toDate ? endOfDay(assignment.toDate) : to;
-      return day >= assignmentFrom && day <= assignmentTo;
+      return day >= assignmentFrom && day <= assignmentTo && assignmentAppliesOnWeekday(assignment, day);
     })?.shiftId;
   }
 

@@ -5,7 +5,7 @@ const Regularization = require('../models/Regularization');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
 const { monthRange, startOfDay, endOfDay, dateKey, calendarDay } = require('../utils/date');
-const { computeShiftWindow, minutesBetween, statusFromWorkedMinutes, resolveTimezoneOffset, measureAgainstWindow, effectiveGraceMinutes } = require('../utils/shift');
+const { computeShiftWindow, minutesBetween, statusFromWorkedMinutes, resolveTimezoneOffset, measureAgainstWindow, effectiveGraceMinutes, assignmentAppliesOnWeekday, latestAssignmentOn } = require('../utils/shift');
 
 const policyCache = require('./policyCache');
 const { freeze, thaw } = require('./memoCache');
@@ -44,16 +44,11 @@ async function getShiftForDate({ tenantId, employeeId, date, context }) {
     const assignment = [...rows].reverse().find((row) => {
       const from = row.fromDate ? startOfDay(row.fromDate) : new Date(0);
       const to = row.toDate ? new Date(new Date(row.toDate).setHours(23, 59, 59, 999)) : new Date(8640000000000000);
-      return day >= from && day <= to;
+      return day >= from && day <= to && assignmentAppliesOnWeekday(row, day);
     });
     return assignment?.shiftId || context.defaultShift || null;
   }
-  const assignment = await ShiftAssignment.findOne({
-    tenantId,
-    employeeId,
-    fromDate: { $lte: day },
-    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: day } }]
-  }).sort('-fromDate -createdAt').populate('shiftId');
+  const assignment = await latestAssignmentOn({ tenantId, employeeId, day });
   if (assignment?.shiftId) return assignment.shiftId;
   return Shift.findOne({ tenantId, active: true }).sort('createdAt');
 }

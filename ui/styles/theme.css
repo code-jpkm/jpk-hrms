@@ -260,6 +260,9 @@ tbody tr:hover td{background:var(--jpk-navy-25)!important}
 .hrbot-fab .dot{background:var(--jpk-orange)!important;border-color:#fff!important}
 .hrbot-panel{border:1px solid var(--jpk-line)!important;border-radius:12px!important;box-shadow:var(--jpk-shadow-pop)!important}
 .hrbot-head{background:var(--jpk-navy)!important;color:#fff!important}
+.hrbot-head b{color:#fff!important}
+.hrbot-head small{color:rgba(255,255,255,.72)!important}
+.hrbot-head button{color:rgba(255,255,255,.82)!important}
 
 /* ---------- responsive shell ---------- */
 @media (max-width:1280px){

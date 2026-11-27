@@ -6,6 +6,10 @@ const shiftAssignmentSchema = new mongoose.Schema({
   shiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', required: true },
   fromDate: Date,
   toDate: Date,
+  // Days of the week this row applies on (0 = Sunday … 6 = Saturday), for
+  // patterns such as "Mon–Fri one shift, Saturday another". Not set = every day.
+  // Stored sorted, never empty.
+  weekdays: { type: [Number], default: undefined },
   assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 

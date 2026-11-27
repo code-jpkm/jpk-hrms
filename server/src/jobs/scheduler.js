@@ -7,7 +7,7 @@ const LeaveRequest = require('../models/LeaveRequest');
 const Regularization = require('../models/Regularization');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const Shift = require('../models/Shift');
-const { computeShiftWindow } = require('../utils/shift');
+const { computeShiftWindow, assignmentAppliesOnWeekday } = require('../utils/shift');
 const { accrueMonthlyLeavesForTenant } = require('../services/accrualService');
 const { syncAllDevices } = require('../services/biometricService');
 const { processAllPending: addWaitingMachinePunches } = require('../services/admsService');
@@ -134,7 +134,7 @@ async function sendMissingCheckInAlerts(now = new Date()) {
       Shift.findOne({ tenantId: tenant._id, active: true }).sort('createdAt').lean()
     ]);
     const shiftBy = new Map();
-    for (const a of assignments) if (a.shiftId) shiftBy.set(String(a.employeeId), a.shiftId);
+    for (const a of assignments) if (a.shiftId && assignmentAppliesOnWeekday(a, day)) shiftBy.set(String(a.employeeId), a.shiftId);
     const missing = staff.filter((s) => {
       if (skip.has(String(s._id))) return false;
       const shift = shiftBy.get(String(s._id)) || defaultShift;

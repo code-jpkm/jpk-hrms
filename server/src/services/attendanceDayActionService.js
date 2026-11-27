@@ -230,11 +230,8 @@ async function runDayAction(req, body = {}) {
       if (!shift) throw new ApiError(404, 'Choose a shift');
       const onwards = String(body.scope || '').toUpperCase() === 'ONWARDS';
       const range = { fromDate: day, toDate: onwards ? null : day };
-      const assignment = await ShiftAssignment.findOneAndUpdate(
-        { tenantId: req.tenantId, employeeId, fromDate: range.fromDate, toDate: range.toDate },
-        { tenantId: req.tenantId, employeeId, shiftId: shift._id, ...range, assignedBy: req.user._id },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+      const { upsertShiftAssignment } = require('./shiftAssignmentService');
+      const assignment = await upsertShiftAssignment({ tenantId: req.tenantId, employeeId, shiftId: shift._id, fromDate: range.fromDate, toDate: range.toDate, assignedBy: req.user._id });
       await audit(req, 'SHIFT_CHANGED_FROM_CALENDAR', assignment, null, `${shift.name} ${onwards ? 'from' : 'on'} ${dayKey}`);
       months = onwards ? monthsFrom(day) : [dayKey.slice(0, 7)];
       message = onwards ? `${shift.name} applies from this day onwards.` : `Shift for this day set to ${shift.name}.`;

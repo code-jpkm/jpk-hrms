@@ -47,6 +47,57 @@ async function applyFactoryFingerprintOnly(tenantId) {
   return { before: { employees: switchedOff }, after: { switchedOff: switchedOff.length } };
 }
 
+// The company pays no Attendance Bonus (user, 27 Nov 2026). The payroll rule
+// seeded in July added one to every payslip as a custom earning. It is taken out
+// of the rule once; draft payslips that still carry it are made again in the
+// background (HR's other edits stay). Released months are left as they are.
+const ATTENDANCE_BONUS = /attendance\s*bonus/i;
+
+async function rebuildDraftsWithoutAttendanceBonus(tenantId) {
+  const PayrollRun = require('../models/PayrollRun');
+  const SalarySlip = require('../models/SalarySlip');
+  const { refreshPayrollAfterAttendanceChange } = require('./payrollSlipService');
+  const runs = await PayrollRun.find({ tenantId, status: { $ne: 'FINALIZED' } }).select('_id month').lean();
+  const rebuilt = [];
+  for (const run of runs) {
+    const slips = await SalarySlip.find({ tenantId, payrollRunId: run._id }).select('employeeId calculated.earnings.custom earnings.custom edits').lean();
+    const carrying = slips.filter((slip) => [
+      ...Object.keys(slip.calculated?.earnings?.custom || {}),
+      ...Object.keys(slip.earnings?.custom || {}),
+      ...Object.keys(slip.edits?.lines || {})
+    ].some((key) => ATTENDANCE_BONUS.test(key)));
+    if (!carrying.length) continue;
+    for (const slip of carrying) {
+      const pinned = Object.keys(slip.edits?.lines || {}).filter((key) => ATTENDANCE_BONUS.test(key));
+      if (pinned.length) await SalarySlip.updateOne({ _id: slip._id }, { $unset: Object.fromEntries(pinned.map((key) => [`edits.lines.${key}`, 1])) });
+    }
+    await refreshPayrollAfterAttendanceChange({ tenantId, employeeIds: carrying.map((slip) => slip.employeeId), months: [run.month] });
+    rebuilt.push({ month: run.month, slips: carrying.length });
+  }
+  return rebuilt;
+}
+
+async function removeAttendanceBonus(tenantId) {
+  const rules = await PayrollRule.find({ tenantId });
+  const removed = [];
+  for (const rule of rules) {
+    const bonus = (rule.customEarnings || []).filter((item) => ATTENDANCE_BONUS.test(item.name || ''));
+    if (!bonus.length) continue;
+    removed.push({ ruleId: String(rule._id), rule: rule.name, items: bonus.map((item) => item.toObject ? item.toObject() : item) });
+    rule.customEarnings = (rule.customEarnings || []).filter((item) => !ATTENDANCE_BONUS.test(item.name || ''));
+    await rule.save();
+  }
+  // Remaking the draft payslips can take a while on a far-away database, so it
+  // runs after the server is up.
+  const later = setTimeout(() => {
+    rebuildDraftsWithoutAttendanceBonus(tenantId)
+      .then((rebuilt) => { if (rebuilt.length) console.log(`[startup] Attendance Bonus taken off draft payslips: ${rebuilt.map((r) => `${r.month} (${r.slips})`).join(', ')}`); })
+      .catch((error) => console.error('[startup] could not remake draft payslips without the Attendance Bonus:', error.message));
+  }, 3000);
+  if (later.unref) later.unref();
+  return { before: { removed }, after: { rulesChanged: removed.length, draftPayslips: 'remade in the background' } };
+}
+
 const UPDATES = [
   {
     action: 'STARTUP_2026_11_STATUTORY_AS_GREYTHR',
@@ -59,6 +110,12 @@ const UPDATES = [
     module: 'ATTENDANCE',
     reason: 'Factory staff use the fingerprint machine only: phone check-in, geofencing, anywhere attendance and work from home switched off for factory employees',
     apply: applyFactoryFingerprintOnly
+  },
+  {
+    action: 'STARTUP_2026_11_REMOVE_ATTENDANCE_BONUS',
+    module: 'PAYROLL',
+    reason: 'The company pays no Attendance Bonus: removed from the payroll rule; draft payslips remade without it',
+    apply: removeAttendanceBonus
   }
 ];
 
@@ -79,4 +136,4 @@ async function runStartupUpdates() {
   }
 }
 
-module.exports = { runStartupUpdates, JPK_PTAX_SLABS, JPK_PTAX_ABOVE_LAST_SLAB };
+module.exports = { runStartupUpdates, rebuildDraftsWithoutAttendanceBonus, JPK_PTAX_SLABS, JPK_PTAX_ABOVE_LAST_SLAB };

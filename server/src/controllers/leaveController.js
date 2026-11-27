@@ -410,6 +410,7 @@ async function submitLeaveRequest(req, input = {}) {
 }
 
 exports.submitLeaveRequest = submitLeaveRequest;
+exports.submitterCanApprove = submitterCanApprove;
 
 exports.apply = asyncHandler(async (req, res) => {
   const { request, autoApproved, appliedOnBehalf, label, name } = await submitLeaveRequest(req, req.body || {});

@@ -9,5 +9,6 @@ router.get('/layout', controller.getLayout);
 router.put('/layout', controller.saveLayout);
 router.post('/ai-widget', controller.aiWidget);
 router.post('/assistant', controller.assistant);
+router.post('/assistant/confirm', controller.assistantConfirm);
 
 module.exports = router;

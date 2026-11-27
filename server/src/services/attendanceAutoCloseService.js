@@ -1,7 +1,7 @@
 const Attendance = require('../models/Attendance');
 const ShiftAssignment = require('../models/ShiftAssignment');
 const AttendancePolicy = require('../models/AttendancePolicy');
-const { computeShiftWindow, resolveTimezoneOffset } = require('../utils/shift');
+const { computeShiftWindow, resolveTimezoneOffset, latestAssignmentOn } = require('../utils/shift');
 const { startOfDay, companyHour, formatCompanyTime } = require('../utils/date');
 
 const DEFAULT_GRACE_MINUTES = 180;
@@ -31,12 +31,7 @@ const DEFAULT_GRACE_MINUTES = 180;
  */
 
 async function shiftWindowFor({ tenantId, employeeId, date, offset }) {
-  const assignment = await ShiftAssignment.findOne({
-    tenantId,
-    employeeId,
-    fromDate: { $lte: date },
-    $or: [{ toDate: null }, { toDate: { $exists: false } }, { toDate: { $gte: date } }]
-  }).populate('shiftId').sort('-fromDate -createdAt');
+  const assignment = await latestAssignmentOn({ tenantId, employeeId, day: date });
   if (!assignment?.shiftId) return null;
   return computeShiftWindow(assignment.shiftId, date, offset);
 }
